@@ -1,0 +1,676 @@
+---
+title: "NCA tables"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+# load code and libraries
+source(file = "00_setup.R")
+library(kableExtra)
+
+# define directories
+dir_out <- file.path(dir_anal, "NCA")
+if (!dir.exists(dir_out)) dir.create(dir_out)
+
+# set up chunks
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+options(knitr.kable.NA = "")
+
+
+conditions <- c("FFT_CEV_adj", "FFT_CERR_adj", "FFT_ECL_adj", "FFT_MCP_adj", "FFT_MSB_adj")
+test.rep = 10000
+```
+
+## Sample demographics
+
+```{r, message=F, warning=F, results='asis'}
+y2_all <- read.csv(file.path(dir_out, "desc_Y2_all_sections.csv"))
+y1_all <- read.csv(file.path(dir_out, "desc_Y1_all_sections.csv"))
+y2_both <- read.csv(file.path(dir_out, "desc_Y2_both_sections.csv"))
+y1_both <- read.csv(file.path(dir_out, "desc_Y1_both_sections.csv"))
+
+sect <- y2_all %>%
+  full_join(.,
+            y1_all, 
+            join_by(Category, Groups)) %>%
+  full_join(.,
+            y2_both,
+            join_by(Category, Groups)) %>%
+  full_join(.,
+            y1_both,
+            join_by(Category, Groups)) %>%
+  as.data.frame()
+
+names(sect) <- c("Category", "", rep(c("Class sections", "Teachers", "Pupils"), 4))
+
+# write data
+file_name <- paste0("table_desc_sections.csv")
+write.csv(sect, file = file.path(dir_out, file_name), row.names = F)
+
+# print to markdown
+sect %>%
+  kable(caption = "Sample composition", digits = 2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_header_above(header = c(" " = 2, "Year 2 (all)" = 3, "Year 1 (all)" = 3, "Year 2 (matched)" = 3, "Year 1 (matched)" = 3)) %>%
+  add_footnote(c("Note. Data shows the total count (percentage of full sample) of class sections, teachers and pupils included.",
+                 "SAM and BAM were not administered in grade 9, leading to an exclusion of all grade 9 class sections.", "Most teachers in elementary grades (4 and 5) were subject matter generalists, teaching multiple subjects to a single group of pupils. Most teachers in middle grades (6 to 8) were specialist teachers, teaching the same subject to multiple groups of pupils.", 
+               paste0("This table was saved as ", file_name, ".")), notation = "none")
+
+```
+
+
+```{r, message=F, warning=F, results='asis'}
+y2_all <- read.csv(file.path(dir_out, "desc_Y2_all_pupils.csv"))
+y1_all <- read.csv(file.path(dir_out, "desc_Y1_all_pupils.csv"))
+y2_both <- read.csv(file.path(dir_out, "desc_Y2_both_pupils.csv"))
+y1_both <- read.csv(file.path(dir_out, "desc_Y1_both_pupils.csv"))
+
+pup <- y2_all %>%
+  mutate(`Year 2 (all)` = sprintf("%.2f%% (%.2f) [%d]", Weighted.mean*100, Weighted.SD*100, N)) %>%
+  select(-c(Characteristic, Weighted.mean, Weighted.SD, N)) %>%
+  full_join(.,
+            y1_all %>%
+              mutate(`Year 1 (all)` = sprintf("%.2f%% (%.2f) [%d]", Weighted.mean*100, Weighted.SD*100, N)) %>%
+              select(-c(Characteristic, Weighted.mean, Weighted.SD, N))
+            ) %>%
+  full_join(.,
+            y2_both %>%
+              mutate(`Year 2 (matched)` = sprintf("%.2f%% (%.2f) [%d]", Weighted.mean*100, Weighted.SD*100, N)) %>%
+              select(-c(Characteristic, Weighted.mean, Weighted.SD, N))
+            ) %>%
+  full_join(.,
+            y1_both %>%
+              mutate(`Year 1 (matched)` = sprintf("%.2f%% (%.2f) [%d]", Weighted.mean*100, Weighted.SD*100, N)) %>%
+              select(-c(Characteristic, Weighted.mean, Weighted.SD, N))
+            ) %>%
+  rename(Characteristic = Description) %>%
+  filter(!grepl("age", Characteristic)) %>%
+  as.data.frame()
+
+# write data
+file_name <- paste0("table_demogs_pupils.csv")
+write.csv(pup, file = file.path(dir_out, file_name), row.names = F)
+
+# print to markdown
+pup %>%
+  kable(caption = "Pupil-level characteristics", digits = 2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_footnote(c(paste("Note. Data shows weighted M (weighted SD) [N classrooms with non-missing data] for each characteristic included in the table. Weighted means and SDs are calculated using the class size. Weighted metrics reflect the distribution of each characteristic across all pupils in the sample."),
+                 paste0("This table was saved as ", file_name, ".")), notation = "none")
+
+```
+
+```{r, message=F, warning=F, results='asis'}
+y2_all <- read.csv(file.path(dir_out, "desc_Y2_all_teachers_num.csv"))
+y1_all <- read.csv(file.path(dir_out, "desc_Y1_all_teachers_num.csv"))
+y2_both <- read.csv(file.path(dir_out, "desc_Y2_both_teachers_num.csv"))
+y1_both <- read.csv(file.path(dir_out, "desc_Y1_both_teachers_num.csv"))
+
+teach_num <- y2_all %>%
+  mutate(`Year 2 (all)` = sprintf("%.2f (%.2f) [%d]", Mean, SD, N)) %>%
+  select(-c(Mean, SD, N)) %>%
+  full_join(.,
+            y1_all %>%
+              mutate(`Year 1 (all)` = sprintf("%.2f (%.2f) [%d]", Mean, SD, N)) %>%
+              select(-c(Mean, SD, N))
+            ) %>%
+  full_join(.,
+            y2_both %>%
+              mutate(`Year 2 (matched)` = sprintf("%.2f (%.2f) [%d]", Mean, SD, N)) %>%
+              select(-c(Mean, SD, N))
+            ) %>%
+  full_join(.,
+            y1_both %>%
+              mutate(`Year 1 (matched)` = sprintf("%.2f (%.2f) [%d]", Mean, SD, N)) %>%
+              select(-c(Mean, SD, N))
+            ) %>%
+  as.data.frame()
+
+y2_all <- read.csv(file.path(dir_out, "desc_Y2_all_teachers_cat.csv"))
+y1_all <- read.csv(file.path(dir_out, "desc_Y1_all_teachers_cat.csv"))
+y2_both <- read.csv(file.path(dir_out, "desc_Y2_both_teachers_cat.csv"))
+y1_both <- read.csv(file.path(dir_out, "desc_Y1_both_teachers_cat.csv"))
+
+teach_cat <- y2_all %>%
+  mutate(`Year 2 (all)` = sprintf("%.2f%% [%d / %d]", Proportion.of.non.missing.observations*100, Count, Non.missing.observations)) %>%
+  select(-c(Count, Non.missing.observations, Proportion.of.non.missing.observations, Proportion.of.sample.size)) %>%
+  full_join(.,
+            y1_all %>%
+              mutate(`Year 1 (all)` = sprintf("%.2f%% [%d / %d]", Proportion.of.non.missing.observations*100, Count, Non.missing.observations)) %>%
+  select(-c(Count, Non.missing.observations, Proportion.of.non.missing.observations, Proportion.of.sample.size))
+            ) %>%
+  full_join(.,
+            y2_both %>%
+              mutate(`Year 2 (matched)` = sprintf("%.2f%% [%d / %d]", Proportion.of.non.missing.observations*100, Count, Non.missing.observations)) %>%
+  select(-c(Count, Non.missing.observations, Proportion.of.non.missing.observations, Proportion.of.sample.size))
+            ) %>%
+  full_join(.,
+            y1_both %>%
+              mutate(`Year 1 (matched)` = sprintf("%.2f%% [%d / %d]", Proportion.of.non.missing.observations*100, Count, Non.missing.observations)) %>%
+  select(-c(Count, Non.missing.observations, Proportion.of.non.missing.observations, Proportion.of.sample.size))
+            ) %>%
+  as.data.frame()
+
+
+teach <- bind_rows(teach_cat, teach_num)
+
+# print to markdown
+file_name <- paste0("table_demogs_teachers.csv")
+write.csv(teach, file = file.path(dir_out, file_name), row.names = F)
+
+teach %>%
+  kable(caption = "Descriptive information on teachers teaching the class sections", digits = 3) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_footnote(c(paste0("Note. For categorical data, the table shows percentage [count / N non-missing observations]. For numerical data, table shows M (SD) [N non-missing observations]."), "Experience was grouped as NEW = [0, 2] years, EARLY = (2, 5] years, EST = (5, 10] years, EXP = (10, 20] years, HIGH = (20, Inf) years.", 
+                 paste0("This table was saved as ", file_name, ".")), notation = "none") %>%
+  print()
+
+```
+
+
+
+## Reliability of observation scores
+
+```{r, message=F, warning=F, results='asis'}
+y2_all <- read.csv(file.path(dir_out, "desc_Y2_all_shrinkage.csv"))
+y1_all <- read.csv(file.path(dir_out, "desc_Y1_all_shrinkage.csv"))
+y2_both <- read.csv(file.path(dir_out, "desc_Y2_both_shrinkage.csv"))
+y1_both <- read.csv(file.path(dir_out, "desc_Y1_both_shrinkage.csv"))
+
+out <- rbind(NA, y2_all) %>%
+  bind_rows(., rbind(NA, y1_all)) %>%
+  bind_rows(., rbind(NA, y2_both)) %>%
+  bind_rows(., rbind(NA, y1_both))
+
+idx <- which(is.na(out$X))
+out[idx, 1] <- c("Year 2 (all)", "Year 1 (all)", "Year 2 (matched)", "Year 1 (matched)")
+
+names(out) <- c("Observation score", "Scores", "Rater", "Segments", "Lessons", "Class sections", "Reliability", "Aggregated score", "Mininum", "Maximum")
+
+# write data
+file_name <- paste0("table_shrinkage.csv")
+write.csv(out, file = file.path(dir_out, file_name))
+
+# print to markdown
+out %>%
+  kable(caption = "Observation score adjustment", digits = 3) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_header_above(header = c(" " = 1, "Count of units aggregated to the teacher level" = 5, "Observed scores" = 2, "Hypothetical boundaries" = 2)) %>%
+  row_spec(idx, bold = T) %>%
+  add_footnote(c(paste0("Note. Data from all teachers was included. For counts, please refer to the other tables."),
+                 "Table shows the counts as M (SD) of scores, raters, segments, lessons and sections that were aggregated to derive a single score at the teacher level.",
+                 "These counts informed the calculation of the reliability coefficients. Together with the observed mean aggregated score, the reliability coefficients were used to calculate the smallest and largest observation score that was hypothetically possible following adjustment.",  paste0("This table was saved as ", file_name, ".")), notation = "none") 
+
+```
+
+
+## OLS regression
+
+```{r, message=F, warning=F, results='asis'}
+y2_all <- read.csv(file.path(dir_out, "coef_Y2_all_main_ols.csv"))
+y1_all <- read.csv(file.path(dir_out, "coef_Y1_all_main_ols.csv"))
+y2_both <- read.csv(file.path(dir_out, "coef_Y2_both_main_ols.csv"))
+y1_both <- read.csv(file.path(dir_out, "coef_Y1_both_main_ols.csv"))
+
+col_names1 <- names(y2_all)
+col_names2 <- unlist(y2_all[1, ])
+
+names(y2_all) <- col_names2
+names(y1_all) <- col_names2
+names(y2_both) <- col_names2
+names(y1_both) <- col_names2
+
+ols <- extract_coefs2(y2_all) %>%
+  left_join(extract_coefs2(y1_all), join_by(Outcome, `Observation score`)) %>%
+  left_join(extract_coefs2(y2_both), join_by(Outcome, `Observation score`)) %>%
+  left_join(extract_coefs2(y1_both), join_by(Outcome, `Observation score`))
+
+
+# prepare for export
+col_names1 <- c("", "", "Year 2 (all)", rep("", 3), "Year 1 (all)", rep("", 3), "Year 2 (matched)", rep("", 3), "Year 1 (matched)", rep("", 3))
+col_names2 <- c("Outcome", "Observation score", rep(c("M1 Coefficient", "M1 Model statistics", "M2 Coefficient", "M2 Model statistics"), 4))
+names(ols) <- col_names1
+ols[1, ] <- col_names2
+
+# save file
+file_name <- paste0("table_ols.csv")
+write.csv(ols, file = file.path(dir_out, file_name), row.names = F)
+
+# print to markdown
+ols[1, ] <- NA
+idx <- grep("VA", ols[, 2])
+
+ols[-1] %>%
+  kable(caption = "OLS coefficients", row.names = F, col.names = col_names2[-1]) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_header_above(header = c(" " = 1, "Year 2 (all)" = 4, "Year 1 (all)" = 4, "Year 2 (matched)" = 4, "Year 1 (matched)" = 4)) %>%
+  row_spec(idx, bold = T) %>%
+  add_footnote(c(paste0("Note. Coefficients show β (SE). Data from all teachers was included in the model. For counts, please refer to the other tables."),
+                 "In model 1, each predictor was entered seperately. In model 2, all predictors were entered together.", 
+                 paste0("This table was saved as ", file_name)), notation = "none") %>%
+  print()
+
+
+```
+
+
+
+## NCA params from the main analysis
+
+```{r, message=F, warning=F, results='asis'}
+params <- read.csv(file.path(dir_out, "coef_Y2_all_main_nca.csv"))
+
+sam <- params %>%
+  filter(grepl("SAM", Measure)) %>%
+  select(Metric, all_of(conditions[1])) %>%
+  rename(SAM = conditions[1]) %>%
+  filter(!is.na(SAM))
+
+bam <- params %>%
+  filter(grepl("BAM", Measure)) %>%
+  select(Metric, all_of(conditions[1])) %>%
+  rename(BAM = conditions[1]) %>%
+  filter(!is.na(BAM))
+
+main <- full_join(sam, bam)
+
+# save file
+file_name <- paste0("table_nca_main.csv")
+write.csv(main, file = file.path(dir_out, file_name), row.names = F)
+
+# print to markdown
+main %>%
+  kable(caption = "NCA parameters", row.names = F) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_footnote(c(paste0("Note. Data from 642 teachers is included. NCA condition = FFT CEV. NCA ceiling line = CR-FDH. Numbers in [] show metrics obtained using z-standardised conditions to facilitate comparability. Numbers in () show the nof for each metric. Fit values of N/A indicate cases where the CR-FDH ceiling zone exceeds the CE-FDH ceiling zone, resulting in a negative closeness percentage that is not conceptually interpretable. This occurs when the straight-line CR-FDH approximation creates a larger empty space than the CE-FDH step-function boundary and does not invalidate effect sizes or ceiling accuracy."), paste0("p values were estimated using ", test.rep, " permutations."),
+                 paste0("This table was saved as ", file_name)), notation = "none") %>%
+  print()
+
+```
+
+## NCA bottlenecks from the main analysis
+
+```{r, message=F, warning=F, results='asis'}
+bottlenecks <- read.csv(file.path(dir_out, "coef_Y2_all_main_bottlenecks.csv"))
+
+sam <- bottlenecks %>%
+  filter(grepl("SAM", Measure)) %>%
+  select(Outcome, contains(conditions[1])) %>%
+  filter(!grepl("VA", Outcome)) %>%
+  rename(Raw = FFT_CEV_adj_act,
+         Std. = FFT_CEV_adj_std_act, 
+         `% range` = FFT_CEV_adj_range,
+         Percentile = FFT_CEV_adj_perc)
+
+bam <- bottlenecks %>%
+  filter(grepl("BAM", Measure)) %>%
+  select(Outcome, contains(conditions[1])) %>%
+  filter(!grepl("VA", Outcome)) %>%
+  rename(Raw = FFT_CEV_adj_act,
+         Std. = FFT_CEV_adj_std_act, 
+         `% range` = FFT_CEV_adj_range,
+         Percentile = FFT_CEV_adj_perc)
+
+out <- full_join(sam, bam, join_by(Outcome))
+names(out) <- c(names(sam), names(bam)[-1])
+
+# save file
+file_name <- paste0("table_bottlenecks_main.csv")
+write.csv(out, file = file.path(dir_out, file_name), row.names = F)
+
+# print to markdown
+out %>%
+  kable(caption = "NCA bottlenecks", row.names = F) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_header_above(header = c(" " = 1, "SAM" = 4, "BAM" = 4)) %>%
+  add_footnote(c(paste0("Note. Data from 642 teachers is included. Bottlenecks are shown for each condition where the values are shown as adjusted values, adjusted standardised values, percentage range or percentiles. NCA condition = FFT CEV. NCA ceiling line = CR-FDH. NN = not necessary."),
+                 paste0("This table was saved as ", file_name)), notation = "none") %>%
+  print()
+
+```
+
+## NCA params from the exploratory analysis
+
+```{r, message=F, warning=F, results='asis'}
+sam <- params %>%
+  filter(grepl("SAM", Measure)) %>%
+  select(Metric, all_of(conditions[-1])) %>%
+  rename_with(~gsub("FFT_|_adj", "", .x)) %>%
+  filter(!grepl("VA", Metric))
+
+# save file
+file_name <- paste0("table_nca_expl_SAM.csv")
+write.csv(sam, file = file.path(dir_out, file_name), row.names = F)
+
+# print to markdown
+sam %>%
+  kable(caption = "Exploratory NCA parameters: SAM", row.names = F) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_footnote(c(paste0("Note. Data from 642 teachers is included. NCA ceiling line = CR-FDH. Numbers in [] show metrics obtained using z-standardised conditions to facilitate comparability. Numbers in () show the nof for each metric. Fit values of N/A indicate cases where the CR-FDH ceiling zone exceeds the CE-FDH ceiling zone, resulting in a negative closeness percentage that is not conceptually interpretable. This occurs when the straight-line CR-FDH approximation creates a larger empty space than the CE-FDH step-function boundary and does not invalidate effect sizes or ceiling accuracy."), paste0("p values were estimated using ", test.rep, " permutations."),
+                 paste0("This table was saved as ", file_name)), notation = "none") %>%
+  print()
+
+bam <- params %>%
+  filter(grepl("BAM", Measure)) %>%
+  select(Metric, all_of(conditions[-1])) %>%
+  rename_with(~gsub("FFT_|_adj", "", .x)) %>%
+  filter(!grepl("VA", Metric))
+
+# save file
+file_name <- paste0("table_nca_expl_BAM.csv")
+write.csv(bam, file = file.path(dir_out, file_name), row.names = F)
+
+# print to markdown
+bam %>%
+  kable(caption = "Exploratory NCA parameters: BAM", row.names = F) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_footnote(c(paste0("Note. Data from 642 teachers is included. NCA ceiling line = CR-FDH. Numbers in [] show metrics obtained using z-standardised conditions to facilitate comparability. Numbers in () show the nof for each metric. Fit values of N/A indicate cases where the CR-FDH ceiling zone exceeds the CE-FDH ceiling zone, resulting in a negative closeness percentage that is not conceptually interpretable. This occurs when the straight-line CR-FDH approximation creates a larger empty space than the CE-FDH step-function boundary and does not invalidate effect sizes or ceiling accuracy."), paste0("p values were estimated using ", test.rep, " permutations."),
+                 paste0("This table was saved as ", file_name)), notation = "none") %>%
+  print()
+
+```
+
+## NCA params from the exploratory analysis
+
+```{r, message=F, warning=F, results='asis'}
+supp <- read.csv(file.path(dir_out, "coef_Y2_all_supp_nca.csv"))
+outlier <- read.csv(file.path(dir_out, "coef_Y2_all_outlier_nca.csv"))
+y1_all <- read.csv(file.path(dir_out, "coef_Y1_all_main_nca.csv"))
+y2_both <- read.csv(file.path(dir_out, "coef_Y2_both_main_nca.csv"))
+y1_both <- read.csv(file.path(dir_out, "coef_Y1_both_main_nca.csv"))
+
+sam <- supp %>%
+  filter(grepl("SAM", Measure)) %>%
+  select(Metric, all_of(conditions[1])) %>%
+  rename(`No aggr` = conditions[1]) %>%
+  filter(!grepl("VA", Metric)) %>%
+  full_join(.,
+            outlier %>%
+              filter(grepl("SAM", Measure)) %>%
+              select(Metric, all_of(conditions[1])) %>%
+              rename(`No outliers` = conditions[1]) %>%
+              filter(!grepl("VA", Metric))
+            ) %>%
+  full_join(.,
+            y1_all %>%
+              filter(grepl("SAM", Measure)) %>%
+              select(Metric, all_of(conditions[1])) %>%
+              rename(`Year 1` = conditions[1]) %>%
+              filter(!grepl("VA", Metric))
+            )  %>%
+  full_join(.,
+            y2_both %>%
+              filter(grepl("SAM", Measure)) %>%
+              select(Metric, all_of(conditions[1])) %>%
+              rename(`Year 2 (matched)` = conditions[1]) %>%
+              filter(!grepl("VA", Metric))
+            ) %>%
+  full_join(.,
+            y1_both %>%
+              filter(grepl("SAM", Measure)) %>%
+              select(Metric, all_of(conditions[1])) %>%
+              rename(`Year 1 (matched)` = conditions[1]) %>%
+              filter(!grepl("VA", Metric))
+            ) 
+
+# save file
+file_name <- paste0("table_nca_sens_SAM.csv")
+write.csv(sam, file = file.path(dir_out, file_name), row.names = F)
+
+# print to markdown
+sam %>%
+  kable(caption = "Sensitivity NCA parameters: SAM", row.names = F) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_footnote(c(paste0("Note. NCA ceiling line = CR-FDH. Numbers in [] show metrics obtained using z-standardised conditions to facilitate comparability. Numbers in () show the nof for each metric. Fit values of N/A indicate cases where the CR-FDH ceiling zone exceeds the CE-FDH ceiling zone, resulting in a negative closeness percentage that is not conceptually interpretable. This occurs when the straight-line CR-FDH approximation creates a larger empty space than the CE-FDH step-function boundary and does not invalidate effect sizes or ceiling accuracy."), paste0("p values were estimated using ", test.rep, " permutations."),
+                 paste0("This table was saved as ", file_name)), notation = "none") %>%
+  print()
+
+
+bam <- supp %>%
+  filter(grepl("BAM", Measure)) %>%
+  select(Metric, all_of(conditions[1])) %>%
+  rename(`No aggr` = conditions[1]) %>%
+  filter(!grepl("VA", Metric)) %>%
+  full_join(.,
+            outlier %>%
+              filter(grepl("BAM", Measure)) %>%
+              select(Metric, all_of(conditions[1])) %>%
+              rename(`No outliers` = conditions[1]) %>%
+              filter(!grepl("VA", Metric))
+            ) %>%
+  full_join(.,
+            y1_all %>%
+              filter(grepl("BAM", Measure)) %>%
+              select(Metric, all_of(conditions[1])) %>%
+              rename(`Year 1` = conditions[1]) %>%
+              filter(!grepl("VA", Metric))
+            )  %>%
+  full_join(.,
+            y2_both %>%
+              filter(grepl("BAM", Measure)) %>%
+              select(Metric, all_of(conditions[1])) %>%
+              rename(`Year 2 (matched)` = conditions[1]) %>%
+              filter(!grepl("VA", Metric))
+            ) %>%
+  full_join(.,
+            y1_both %>%
+              filter(grepl("BAM", Measure)) %>%
+              select(Metric, all_of(conditions[1])) %>%
+              rename(`Year 1 (matched)` = conditions[1]) %>%
+              filter(!grepl("VA", Metric))
+            ) 
+
+# save file
+file_name <- paste0("table_nca_sens_BAM.csv")
+write.csv(bam, file = file.path(dir_out, file_name), row.names = F)
+
+# print to markdown
+bam %>%
+  kable(caption = "Sensitivity NCA parameters: BAM", row.names = F) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_footnote(c(paste0("Note. NCA condition = FFT CEV. NCA ceiling line = CR-FDH. Numbers in [] show metrics obtained using z-standardised conditions to facilitate comparability. Numbers in () show the nof for each metric. Fit values of N/A indicate cases where the CR-FDH ceiling zone exceeds the CE-FDH ceiling zone, resulting in a negative closeness percentage that is not conceptually interpretable. This occurs when the straight-line CR-FDH approximation creates a larger empty space than the CE-FDH step-function boundary and does not invalidate effect sizes or ceiling accuracy."), paste0("p values were estimated using ", test.rep, " permutations."),
+                 paste0("This table was saved as ", file_name)), notation = "none") %>%
+  print()
+
+```
+
+## Follow-up regression
+
+```{r, message=F, warning=F, results='asis'}
+y2_all <- read.csv(file.path(dir_out, "coef_Y2_all_mqi_subgroups.csv"))
+y1_all <- read.csv(file.path(dir_out, "coef_Y1_all_mqi_subgroups.csv"))
+y2_both <- read.csv(file.path(dir_out, "coef_Y2_both_mqi_subgroups.csv"))
+y1_both <- read.csv(file.path(dir_out, "coef_Y2_both_mqi_subgroups.csv"))
+
+col_names1 <- names(y2_all)
+col_names2 <- unlist(y2_all[1, ])
+
+names(y2_all) <- col_names2
+names(y1_all) <- col_names2
+names(y2_both) <- col_names2
+names(y1_both) <- col_names2
+
+
+ols <- extract_coefs(y2_all) %>%
+  bind_rows(extract_coefs(y1_all)) %>%
+  bind_rows(extract_coefs(y2_both)) %>%
+  bind_rows(extract_coefs(y1_both))
+ols <- rbind(NA, ols)
+
+idx <- grep("Outcome", ols$Outcome)
+ols[idx, ] <- NA
+ols[idx, 1:2] <- c("Year 2 (all)", "Year 1 (all)", "Year 2 (matched)", "Year 1 (matched)")
+
+
+# prepare for export
+col_names1 <- c("", "", "Model 1", "", "Model 2", "", "Model 3", "", "Model 4A", "", "Model 4B", "")
+col_names2 <- c("Outcome", "Observation score", rep(c("Coefficient", "Model statistics"), 5))
+names(ols) <- col_names1
+ols[1, ] <- col_names2
+
+# get data for each outcome
+sam <- ols[grepl("Out|Year|SAM", ols[, 1]), ]
+sam <- sam[!grepl("VA", sam[, 2]), -1]
+
+# save file
+file_name <- paste0("table_mqi_subgroups_SAM.csv")
+write.csv(sam, file = file.path(dir_out, file_name), row.names = F)
+
+# print to markdown
+sam[1, ] <- NA
+idx <- grep("Year", sam[, 1])
+
+sam %>%
+  kable(caption = "OLS coefficients - SAM condition inefficiency models", row.names = F, col.names = col_names2[-1]) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_header_above(header = c(" " = 1, "Model 1" = 2, "Model 2" = 2, "Model 3" = 2, "Model 4A" = 2, "Model 4B" = 2)) %>%
+  row_spec(idx, bold = T) %>%
+    add_footnote(c(paste0("Note. In model 1, each predictor was entered separately. In model 2, reliability-adjusted predictor scores were entered separately. In model 3, all reliability-adjusted predictor scores were entered together. In model 4A, data from unconstrained classrooms (or classrooms affected by condition inefficiency) were included (that is CEV > x_cmax). In model 4B, data from constrained classrooms (or classrooms not affected by condition inefficiency) were included (that is, CEV <= x_cmax)."),
+                 paste0("This table was saved as ", file_name)), notation = "none") %>%
+  print()
+
+# get data for each outcome
+bam <- ols[grepl("Out|Year|BAM", ols[, 1]), ]
+bam <- bam[!grepl("VA", bam[, 2]), -1]
+
+# save file
+file_name <- paste0("table_mqi_subgroups_BAM.csv")
+write.csv(bam, file = file.path(dir_out, file_name), row.names = F)
+
+# print to markdown
+bam[1, ] <- NA
+idx <- grep("Year", bam[, 1])
+
+bam %>%
+  kable(caption = "OLS coefficients - BAM condition inefficiency models", row.names = F, col.names = col_names2[-1]) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_header_above(header = c(" " = 1, "Model 1" = 2, "Model 2" = 2, "Model 3" = 2, "Model 4A" = 2, "Model 4B" = 2)) %>%
+  row_spec(idx, bold = T) %>%
+    add_footnote(c(paste0("Note. In model 1, each predictor was entered separately. In model 2, reliability-adjusted predictor scores were entered separately. In model 3, all reliability-adjusted predictor scores were entered together. In model 4A, data from unconstrained classrooms (or classrooms affected by condition inefficiency) were included (that is CEV > x_cmax). In model 4B, data from constrained classrooms (or classrooms not affected by condition inefficiency) were included (that is, CEV <= x_cmax)."),
+                 paste0("This table was saved as ", file_name)), notation = "none") %>%
+  print()
+```
+
+## Follow-up regression
+
+```{r, message=F, warning=F, results='asis'}
+y2_all <- read.csv(file.path(dir_out, "coef_Y2_all_mqi_interaction.csv"))
+y1_all <- read.csv(file.path(dir_out, "coef_Y1_all_mqi_interaction.csv"))
+y2_both <- read.csv(file.path(dir_out, "coef_Y2_both_mqi_interaction.csv"))
+y1_both <- read.csv(file.path(dir_out, "coef_Y1_both_mqi_interaction.csv"))
+
+ncol <- (ncol(y2_all)+2)/2
+col_names1 <- names(y2_all)
+col_names2 <- unlist(y2_all[1, ])
+
+names(y2_all) <- col_names2
+names(y1_all) <- col_names2
+names(y2_both) <- col_names2
+names(y1_both) <- col_names2
+
+dummy <- y2_all %>%
+  select(1:ncol) %>%
+  tidyr::fill(Outcome, .direction = "down") %>%
+  mutate(
+    stars = if_else(p == "<.001", "***", 
+                    if_else(as.numeric(p) < 0.01, "**",
+                            if_else(as.numeric(p) < 0.05, "*",
+                                    ""))),
+    Coefficient = if_else(!grepl("VA", `Observation score`) & !is.na(`Observation score`), paste0(β, stars, " (", SE, ")"), NA),
+    `Model statistics` = if_else(!grepl("VA|Obs", `Observation score`) & !is.na(`Observation score`), 
+                                 paste0("R2 = ", R2, ",\nF(", numdf, ", ", dendf, ") = ", `F`, ",\np = ", `p (F)`), 
+                                 NA),
+    `Model statistics` = gsub("= <", "<", `Model statistics`)
+  ) %>%
+  tidyr::fill(`Model statistics`, .direction = "down") %>%
+  mutate(`Model statistics` = if_else(is.na(`Observation score`), `Model statistics`, NA)) %>%
+  select(Outcome, `Observation score`, Coefficient, `Model statistics`) %>%
+  left_join(.,
+            y1_all %>%
+              select(1:ncol) %>%
+              tidyr::fill(Outcome, .direction = "down") %>%
+              mutate(
+                stars = if_else(p == "<.001", "***", 
+                                if_else(as.numeric(p) < 0.01, "**",
+                                        if_else(as.numeric(p) < 0.05, "*",
+                                                ""))),
+                Coefficient = if_else(!grepl("VA", `Observation score`) & !is.na(`Observation score`), paste0(β, stars, " (", SE, ")"), NA),
+                `Model statistics` = if_else(!grepl("VA|Obs", `Observation score`) & !is.na(`Observation score`), 
+                                             paste0("R2 = ", R2, ",\nF(", numdf, ", ", dendf, ") = ", `F`, ",\np = ", `p (F)`), 
+                                             NA),
+                `Model statistics` = gsub("= <", "<", `Model statistics`)
+              ) %>%
+              tidyr::fill(`Model statistics`, .direction = "down") %>%
+              mutate(`Model statistics` = if_else(is.na(`Observation score`), `Model statistics`, NA)) %>%
+              select(Outcome, `Observation score`, Coefficient, `Model statistics`)
+            , join_by(Outcome, `Observation score`)) %>%
+  left_join(.,
+            y2_both %>%
+              select(1:ncol) %>%
+              tidyr::fill(Outcome, .direction = "down") %>%
+              mutate(
+                stars = if_else(p == "<.001", "***", 
+                                if_else(as.numeric(p) < 0.01, "**",
+                                        if_else(as.numeric(p) < 0.05, "*",
+                                                ""))),
+                Coefficient = if_else(!grepl("VA", `Observation score`) & !is.na(`Observation score`), paste0(β, stars, " (", SE, ")"), NA),
+                `Model statistics` = if_else(!grepl("VA|Obs", `Observation score`) & !is.na(`Observation score`), 
+                                             paste0("R2 = ", R2, ",\nF(", numdf, ", ", dendf, ") = ", `F`, ",\np = ", `p (F)`), 
+                                             NA),
+                `Model statistics` = gsub("= <", "<", `Model statistics`)
+              ) %>%
+              tidyr::fill(`Model statistics`, .direction = "down") %>%
+              mutate(`Model statistics` = if_else(is.na(`Observation score`), `Model statistics`, NA)) %>%
+              select(Outcome, `Observation score`, Coefficient, `Model statistics`)
+            , join_by(Outcome, `Observation score`)) %>%
+  left_join(.,
+            y1_both %>%
+              select(1:ncol) %>%
+              tidyr::fill(Outcome, .direction = "down") %>%
+              mutate(
+                stars = if_else(p == "<.001", "***", 
+                                if_else(as.numeric(p) < 0.01, "**",
+                                        if_else(as.numeric(p) < 0.05, "*",
+                                                ""))),
+                Coefficient = if_else(!grepl("VA", `Observation score`) & !is.na(`Observation score`), paste0(β, stars, " (", SE, ")"), NA),
+                `Model statistics` = if_else(!grepl("VA|Obs", `Observation score`) & !is.na(`Observation score`), 
+                                             paste0("R2 = ", R2, ",\nF(", numdf, ", ", dendf, ") = ", `F`, ",\np = ", `p (F)`), 
+                                             NA),
+                `Model statistics` = gsub("= <", "<", `Model statistics`)
+              ) %>%
+              tidyr::fill(`Model statistics`, .direction = "down") %>%
+              mutate(`Model statistics` = if_else(is.na(`Observation score`), `Model statistics`, NA)) %>%
+              select(Outcome, `Observation score`, Coefficient, `Model statistics`)
+            , join_by(Outcome, `Observation score`)) 
+
+# prepare for export
+col_names1 <- c("", "", "Year 2 (all)", "", "Year 1 (all)", "", "Year 2 (matched)", "", "Year 1 (matched)", "")
+col_names2 <- c("Outcome", "Observation score", rep(c("Coefficient", "Model statistics"), 4))
+names(dummy) <- col_names1
+dummy[1, ] <- col_names2
+
+
+# save file
+file_name <- paste0("table_mqi_interaction.csv")
+write.csv(dummy, file = file.path(dir_out, file_name), row.names = F)
+
+
+# print to markdown
+dummy[1, ] <- NA
+idx <- grep("VA", dummy[, 2])
+
+dummy[-1] %>%
+  kable(caption = "OLS coefficients - Condition inefficiency interaction models", row.names = F, col.names = col_names2[-1]) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_header_above(header = c(" " = 1, "Year 2 (all)" = 2, "Year 1 (all)" = 2, "Year 2 (matched)" = 2, "Year 1 (matched)" = 2)) %>%
+  row_spec(idx, bold = T) %>%
+  add_footnote(c(paste0("Note. Coefficients show β (SE). Data from all teachers was included in the model. For counts, please refer to the other tables."),
+                 "Following from the subgroup analysis, presence (CEV <= x_cmax) vs. absence (CEV > x_cmax) of a constraint of the condition on the outcome was included into the models as interaction term.", 
+                 "Dummy coding was applied (0 = unconstrained, 1 = constrained). This places the unconstrained group as the reference group where the regression coefficient shows the difference between unconstrained and constrained. The intercept represents the value of the outcome in the unconstrained group when all predictors are 0. The MQI beta coefficients show the effects of each predictor in the unconstrained group. The constraint beta is the difference between the unconstrained and constrained group when all predictors are zero. The interaction terms show how the effect of each predictor changes in the constrained group relative to the unconstrained group.", 
+                 paste0("This table was saved as ", file_name)), notation = "none") %>%
+  print()
+
+```
+
