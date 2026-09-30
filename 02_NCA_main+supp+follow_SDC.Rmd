@@ -550,6 +550,66 @@ df_teachers <- teachers_y1_both
 YEAR <- "Y1_both"
 ```
 
+```{r y1y2, eval=F, include=FALSE}
+id_cols <- names(df_teachers)[grepl("_ID|DAD_|PRESENT|NUM|RAND|GRADE|SUBJECT", names(df_teachers))]
+id_cols <- names(df_teachers)[grepl("_ID|DAD_|PRESENT|RAND", names(df_teachers))]
+
+# combine data
+df_teachers_y1y2 <- left_join(df_teachers_Y1_both, df_teachers_Y2_both,
+                              by = id_cols) %>%
+  rename_with(., ~ gsub(".x", "_Y1", .x, fixed = TRUE)) %>%
+  rename_with(., ~ gsub(".y", "_Y2", .x, fixed = TRUE)) %>%
+  relocate(all_of(id_cols))
+
+# select cols for df_teachers
+cols <- names(df_teachers_y1y2)[grepl("^VA_|^FFT_|^MQI_", names(df_teachers_y1y2))]
+cols <- cols[!grepl("_rel|_N_|_SE_|_std_", cols)]
+
+# define base name
+cols_base <- cols[!grepl("_adj", cols)]
+cols_base <- sub("_Y1$", "", cols_base[ grepl("_Y1", cols_base) & grepl("MQI|FFT|VA", cols_base) ])
+
+# calculate correlation across years (adjusted p values with FDR)
+cor_results <- data.frame(
+  variable = cols_base,
+  cor_raw = sapply(cols_base, function(v){
+    cor.test(df_teachers_y1y2[[paste0(v, "_Y1")]], df_teachers_y1y2[[paste0(v, "_Y2")]], use = "pairwise.complete.obs")$estimate
+  }),
+  p_raw = sapply(cols_base, function(v){
+    p.adjust(cor.test(df_teachers_y1y2[[paste0(v, "_Y1")]], df_teachers_y1y2[[paste0(v, "_Y2")]], use = "pairwise.complete.obs")$p.value, method = "fdr")
+  }),
+  cor_adj = sapply(cols_base, function(v){
+    cor.test(df_teachers_y1y2[[paste0(v, "_adj_Y1")]], df_teachers_y1y2[[paste0(v, "_adj_Y2")]], use = "pairwise.complete.obs")$estimate
+  }),
+  p_adj = sapply(cols_base, function(v){
+    p.adjust(cor.test(df_teachers_y1y2[[paste0(v, "_adj_Y1")]], df_teachers_y1y2[[paste0(v, "_adj_Y2")]], use = "pairwise.complete.obs")$p.value, method = "fdr")
+  })
+) %>%
+  mutate(
+    across(starts_with("cor"), ~fmt_nolead(.x, 2)),
+    across(starts_with("p"), ~if_else(. < 0.001, "<.001", fmt_nolead(.x)))
+  )
+
+# select cols for correlation matrix
+cols <- names(df_teachers_y1y2)[grepl("^VA_|^FFT_|^MQI_", names(df_teachers_y1y2))]
+cols <- cols[!grepl("_rel|_N_|_SE_|_std_", cols)]
+
+# col names in each year
+cols_Y1 <- cols[ grepl("_Y1", cols) & grepl("MQI|FFT", cols) ]
+cols_Y2 <- cols[ grepl("_Y2", cols) & grepl("VA", cols) ]
+
+# select columns
+df_teachers_y1y2 <- df_teachers_y1y2 %>%
+  select(all_of(c(id_cols, cols_Y1, cols_Y2))) %>%
+  rename_with(., ~ gsub("_Y1", "", .x, fixed = TRUE)) %>%
+  rename_with(., ~ gsub("_Y2", "", .x, fixed = TRUE)) 
+
+
+df_teachers <- df_teachers_y1y2
+YEAR <- "Y1Y2"
+
+```
+
 
 ```{r preproc, eval=F, message=F}
 
@@ -820,6 +880,10 @@ cols_teach_num <- c("DAD_YRSEXP",
                     paste0(scores, "_adj")
 )
 
+# save data in environment
+assign(paste0("df_teachers_", YEAR), df_teachers)
+assign(paste0("df_classes_", YEAR), df_classes)
+
 ```
 
 ```{r demogs_pupils, results='asis', eval=F, message=F}
@@ -855,9 +919,14 @@ tmp <-  df_classes %>%
       summarise(
         Category = "Subject level",
         `Number of class sections` = sprintf("%d (%.2f%%)", length(unique(SECTION_ICPSR_ID)), length(unique(SECTION_ICPSR_ID))/length(unique(df_classes$SECTION_ICPSR_ID))*100),
-        # `Number of teachers` = sprintf("%d (%.2f%%)", length(unique(TEACHER_ICPSR_ID)), length(unique(TEACHER_ICPSR_ID))/length(unique(df_classes$TEACHER_ICPSR_ID))*100),
+                `Number of teachers` = sprintf("%d (%.2f%%)", length(unique(TEACHER_ICPSR_ID)), length(unique(TEACHER_ICPSR_ID))/length(unique(df_classes$TEACHER_ICPSR_ID))*100),
+
         `Number of pupils` = sprintf("%d (%.2f%%)", sum(DAD_NUMSTUDENTS), sum(DAD_NUMSTUDENTS)/sum(df_classes$DAD_NUMSTUDENTS)*100)
       ) %>%
+      mutate(
+        tmp = paste(YEAR),
+        `Number of teachers` = if(grepl("Y2", YEAR)) NA else `Number of teachers`) %>%
+      select(-tmp) %>%
       rename(Groups = SUBJECTLEVEL)
   ) %>% 
   bind_rows(df_classes %>% 
@@ -1810,6 +1879,7 @@ tmp %>%
 ```
 
 ```{r cor, eval = F, warning = F, results='asis'}
+# <<cor>>
 # determine vars
 vars <- c(score_fft2, score_mqi, DVs_main)
 
@@ -2393,7 +2463,7 @@ ols <- tmp %>%
     across(starts_with("t val"), ~sprintf("%.3f", .x)),
     across(starts_with("F val"), ~sprintf("%.3f", .x)),
     across(starts_with("p "), ~if_else(. < 0.001, "<.001", fmt_nolead(.x))),
-    across(starts_with("R2"), ~if_else(!is.na(.x), paste0(fmt_nolead(.x*100, 2), "%"), NA)),
+    across(starts_with("R2"), ~if_else(!is.na(.x), sprintf("%.2f%%", .x), NA)),
     across(starts_with("Esti"), ~sprintf("%.2f", .x)),
     across(starts_with("SE"), ~sprintf("%.2f", .x)),
     across(starts_with("Std."), ~sprintf("%.2f", .x)),
@@ -2953,7 +3023,7 @@ ols <- tmp %>%
     across(starts_with("t val"), ~sprintf("%.3f", .x)),
     across(starts_with("F val"), ~sprintf("%.3f", .x)),
     across(starts_with("p "), ~if_else(. < 0.001, "<.001", fmt_nolead(.x))),
-    across(starts_with("R2"), ~if_else(!is.na(.x), paste0(fmt_nolead(.x*100, 2), "%"), NA)),
+    across(starts_with("R2"), ~if_else(!is.na(.x), sprintf("%.2f%%", .x), NA)),
     across(starts_with("Esti"), ~sprintf("%.2f", .x)),
     across(starts_with("Std."), ~sprintf("%.2f", .x)),
     across(everything(), ~gsub("NA", "", .x))
@@ -3003,7 +3073,7 @@ ols <- tmp %>%
     across(starts_with("t val"), ~sprintf("%.3f", .x)),
     across(starts_with("F val"), ~sprintf("%.3f", .x)),
     across(starts_with("p "), ~if_else(. < 0.001, "<.001", fmt_nolead(.x))),
-    across(starts_with("R2"), ~if_else(!is.na(.x), paste0(fmt_nolead(.x*100, 2), "%"), NA)),
+    across(starts_with("R2"), ~if_else(!is.na(.x), sprintf("%.2f%%", .x), NA)),
     across(starts_with("Esti"), ~sprintf("%.2f", .x)),
     across(starts_with("Std."), ~sprintf("%.2f", .x)),
     across(everything(), ~gsub("NA", "", .x))
@@ -3472,8 +3542,6 @@ df_nca <- df_teachers
 
 # Teachers with Maths data in both years: Year 2 data
 
-> In this set of analysis, we focus on data on the **focal class sections** taught by MET LDB mathematics teachers in Year 1 (that is, 2010). During the first year of the study, teachers were not randomised. We limit the analysis to the focal class sections for which there are observations from the FFT, CLASS and MQI observation instruments as well as teacher-value added outcome measures for the state maths test (aligned with curriculum in grades 4-8) and the Balanced Assessment of Mathematics (BAM, grades 4-8). At grade 9, ACT QualityCore Assessments were the only achievement tests administered to the pupils. Data from grade 9 were hence omitted.  
-
 ```{r, results='asis', message=F, include=F}
 <<y2_both>>
 <<preproc>>
@@ -3588,8 +3656,6 @@ df_nca <- df_teachers
 
 # Teachers with Maths data in both years: Year 1 data
 
-> In this set of analysis, we focus on data on the **focal class sections** taught by MET LDB mathematics teachers in Year 1 (that is, 2010). During the first year of the study, teachers were not randomised. We limit the analysis to the focal class sections for which there are observations from the FFT, CLASS and MQI observation instruments as well as teacher-value added outcome measures for the state maths test (aligned with curriculum in grades 4-8) and the Balanced Assessment of Mathematics (BAM, grades 4-8). At grade 9, ACT QualityCore Assessments were the only achievement tests administered to the pupils. Data from grade 9 were hence omitted.  
-
 ```{r, results='asis', message=F, include=F}
 <<y1_both>>
 <<preproc>>
@@ -3667,6 +3733,63 @@ ylim = c(1, 3)
 
 ```{r results='asis', warning=F, message=F}
 <<vam>>
+```
+
+## Intercorrelation matrix  
+
+```{r results='asis', warning=F, message=F}
+<<cor>>
+```
+
+## Main NCA analysis
+
+```{r, message=F, warning=F, results='asis', fig.height=7, fig.width=7}
+# define NCA parameters
+df_nca <- df_teachers
+conditions <- c("FFT_CEV_adj", "FFT_CERR_adj", "FFT_ECL_adj", "FFT_MCP_adj", "FFT_MSB_adj")
+ceilings <- c("cr_fdh", "ols")
+vam <- VAM[grepl("adj", VAM)]
+vam <- vam[!grepl("_NOAGGR_|_std", vam)]
+
+xlim <- c(1, 4)
+ylim <- c(-4, 4)
+xbreaks <- .25
+ybreaks <- .5
+xbin <- .125
+ybin <- .5
+file_name_stem <- paste0(YEAR, "_main")
+<<nca>>
+```
+
+## Regression
+
+```{r, message=F, results='asis'}
+df_nca <- df_teachers
+<<regression>>
+```
+
+
+# Teachers with Maths data in both years: Year 1 conditions for Y2 TVA
+
+
+```{r, results='asis', message=F, include=F}
+<<y1y2>>
+```
+
+## Correlation across years
+
+```{r results='asis', warning=F, message=F}
+# write data
+file_name <- paste0("cor_", YEAR, "_long.csv")
+write.csv(cor_results, file = file.path(dir_out, file_name))
+
+cor_results %>%
+  kable(row.names = F, caption = "Correlation between Y1 and Y2 scores") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_footnote(c(paste0("Note. Data from ", nrow(df_teachers_y1y2), " teachers is included."),
+                 paste0("This table was saved as ", file_name)), notation = "none") %>%
+  print()
+
 ```
 
 ## Intercorrelation matrix  
