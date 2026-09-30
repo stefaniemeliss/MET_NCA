@@ -1,0 +1,3201 @@
+---
+title: "Necessary conditions analysis (NCA)"
+author: "Stef Meliss"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+# load code and libraries
+source(file = "00_setup.R")
+library(kableExtra)
+library(ggplot2)
+library(GGally)
+library(ggside)
+library(ggpubr)
+library(NCA)
+
+# set up chunks
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+options(knitr.kable.NA = "")
+
+# load pre-processed observation data
+df_mqi <- read.csv(file = file.path(dir_base_obs, "data_section_MQI.csv"))
+df_class <- read.csv(file = file.path(dir_base_obs, "data_section_CLASS.csv"))
+df_utop <- read.csv(file = file.path(dir_base_obs, "data_section_UTOP.csv"))
+df_fft <- read.csv(file = file.path(dir_base_obs, "data_section_FFT.csv"))
+
+# information about the class sections
+load(file.path(dir_data, "da34414-0003_v10_REST.rda"))
+
+# information about teachers
+load(file.path(dir_data, "da34414-0002_v10_REST.rda"))
+
+# define columns that contain pupil characteristics
+cols_pup <- names(da34414.0003)[grepl("DAD_PERC", names(da34414.0003))]
+cols_pup_lbl <- c("% gifted", "% male", "% special education status", "% English language learner status", "% Free or reduced lunch price status", "% Other ethnic background", "% Asian", "% Hispanic", "% Black", "% White", "% disability status")
+
+# segment level data
+mqi <- read.csv(file = file.path(dir_base_obs, "data_segment_MQI.csv"))
+class <- read.csv(file = file.path(dir_base_obs, "data_segment_CLASS.csv"))
+utop <- read.csv(file = file.path(dir_base_obs, "data_segment_UTOP.csv"))
+fft <- read.csv(file = file.path(dir_base_obs, "data_segment_FFT.csv"))
+
+# script-level vars
+DVs <- c("VA_MATH", "VA_BAM")
+
+# colouring
+cols_obs <- c(
+  "FFT_CEV" = teal,
+  "FFT_MSB" = coral,
+  "FFT_MCP" = purple,
+  "FFT_CERR" = orange,
+  "FFT_ECL" = cyan,
+  "FFT_INS" = navy,
+  "FFT_UQDT" = red,
+  "FFT_CS" = blue,
+  "FFT_ESL" = yellow,
+  "FFT_UAI" = black
+)
+
+cols_vam <- c(
+  "MATH" = blue,
+  "BAM" = red
+)
+
+```
+
+```{r fft, results='asis', message=F, eval =F}
+# score columns
+score_fft <- c(
+  "FFT_MSB", # "Managing Student behaviour" 
+  "FFT_MCP", # "Managing Classroom Procedures" 
+  "FFT_CERR", # "Creating an Environment of Respect & Rapport" 
+  "FFT_ECL", # "Establishing a Culture for Learning" 
+  "FFT_UQDT", # "Using Questioning & Discussion Techniques" 
+  "FFT_CS", # "Communicating with Students" 
+  "FFT_ESL", # "Engaging Students in Learning" 
+  "FFT_UAI" # "Using Assessment in Instruction" 
+)
+score <- score_fft
+
+# assign labels
+label_fft <- c(
+  "Managing student behaviour", 
+  "Managing classroom procedures", 
+  "Creating an environment of respect and rapport", 
+  "Establishing a culture for learning", 
+  "Using questioning and discussion techniques", 
+  "Communicating with students", 
+  "Engaging students in learning", 
+  "Using assessment in instruction" 
+)
+label <- label_fft
+
+# assign domains
+domain_fft <- c(
+  rep("Classroom environment (FFT_CEV)", 4),
+  rep("Instruction (FFT_INS)", 4)
+)
+domain <- domain_fft
+
+# markdown table to map item name and description
+instrument <- data.frame(Item = score, Description = label, Domain = domain)
+instrument %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  print()
+
+# update score
+score2 <- c("FFT_CEV", instrument$Item[grepl("CEV", instrument$Domain)], "FFT_INS", instrument$Item[grepl("INS", instrument$Domain)])
+
+# define scale
+scale_fft <- c(
+  "unsatisfactory",
+  "basic",
+  "proficient",
+  "distinguished"
+)
+scale <- scale_fft
+
+# define item types
+itemtypes_fft <- "graded"
+itemtypes <- itemtypes_fft
+
+# plotting params
+cols <- c("1" = purple, "2" = blue, "3" = red, "4" = teal)
+levels <- c("4", "3", "2", "1")
+cols2 <- c("P.1" = purple, "P.2" = blue, "P.3" = red, "P.4" = teal)
+nrow = 2
+
+```
+
+```{r preproc, eval=F, message=F}
+# variance decomposition (Table 11)
+fft_vd <- data.frame(
+  score = c(# DIFFERENT ORDER!!
+    "FFT_CERR",  
+    "FFT_UQDT",
+    "FFT_ECL", 
+    "FFT_MCP", 
+    "FFT_CS",  
+    "FFT_MSB", 
+    "FFT_ESL", 
+    "FFT_UAI" 
+  ),
+  teacher = c(30, 15, 25, 24, 21, 33, 20, 18),
+  section = c(3, 4, 0, 6, 1, 8, 3, 0),
+  lesson = c(8, 12, 10, 0, 2, 1, 12, 3),
+  rater = c(7, 6, 7, 7, 8, 3, 6, 9),
+  residual = c(53, 62, 57, 62, 68, 54, 59, 70)
+)
+
+# --- SECTION LEVEL DATA --- #
+
+# compute the implied reliability of each score at section level
+for (i in 1:length(score)) {
+  
+  # compute reliability
+  df[, paste0(score[i], "_rel")] <- met_reliability(
+    perc_teacher = fft_vd$teacher[fft_vd$score == score[i]], 
+    perc_section = fft_vd$section[fft_vd$score == score[i]], num_section = df$NUM_SECTION_FFT, 
+    perc_lesson = fft_vd$lesson[fft_vd$score == score[i]], num_lesson = df$NUM_LESSON_FFT,
+    perc_rater = fft_vd$rater[fft_vd$score == score[i]], num_rater = df$NUM_RATER_FFT,
+    perc_residual = fft_vd$residual[fft_vd$score == score[i]], num_scores = df[, paste0("NUM_SCORE_", score[i])]
+  )
+  
+  # apply shrinkage based on reliability
+  # adjusted score = MEAN + reliability * (observed score - MEAN)
+  df[, paste0(score[i], "_adj")] <- c(mean(df[, score[i]], na.rm = T) + 
+                                        df[, paste0(score[i], "_rel")] * scale(df[, score[i]], center = T, scale = F))
+  
+}
+
+
+# aggregate FFT domain scores
+df$FFT_CEV <- rowMeans(df[, paste0(instrument$Item[grepl("CEV", instrument$Domain)])])
+df$FFT_INS <- rowMeans(df[, paste0(instrument$Item[grepl("INS", instrument$Domain)])])
+
+# aggregate domain scores
+df$FFT_CEV_adj <- rowMeans(df[, paste0(instrument$Item[grepl("CEV", instrument$Domain)], "_adj")])
+df$FFT_INS_adj <- rowMeans(df[, paste0(instrument$Item[grepl("INS", instrument$Domain)], "_adj")])
+
+# standardise scores
+for (i in 1:length(score2)) {
+  
+  df[, paste0(score2[i], "_std")] <- c(scale(df[, paste0(score2[i])], center = T, scale = T))
+  df[, paste0(score2[i], "_adj_std")] <- c(scale(df[, paste0(score2[i], "_adj")], center = T, scale = T))
+  
+}
+
+# NOTE: because VAMs were computed within grades and districts rather than across the sample, any differences between groups have already been removed
+
+# apply shrinkage based on reliability
+for (i in 1:length(DVs)) {
+  
+  # estimate reliability
+  df[, paste0(DVs[i], "_rel")] <- vam_reliability(vam = df[, paste0(DVs[i])], se = df[, paste0(DVs[i], "_SE")])
+  
+  # adjusted score = MEAN + reliability * (observed score - MEAN)
+  df[, paste0(DVs[i], "_adj")] <- c(mean(df[, DVs[i]], na.rm = T) + df[, paste0(DVs[i], "_rel")] * scale(df[, DVs[i]], center = T, scale = F))
+  
+  # standardise scores
+  df[, paste0(DVs[i], "_std")] <- c(scale(df[, paste0(DVs[i])], center = T, scale = T))
+  df[, paste0(DVs[i], "_adj_std")] <- c(scale(df[, paste0(DVs[i], "_adj")], center = T, scale = T))
+  
+}
+
+# --- TEACHER LEVEL DATA --- #
+
+df_teachers <- df_teachers %>%
+  mutate(
+    # make factor variables numeric
+    DAD_MALE = as.character(DAD_MALE),
+    DAD_MALE = as.numeric(substr(DAD_MALE, nchar(DAD_MALE), nchar(DAD_MALE))),
+    DAD_WHITE = as.character(DAD_WHITE),
+    DAD_WHITE = as.numeric(substr(DAD_WHITE, nchar(DAD_WHITE), nchar(DAD_WHITE))),
+    DAD_BLACK = as.character(DAD_BLACK),
+    DAD_BLACK = as.numeric(substr(DAD_BLACK, nchar(DAD_BLACK), nchar(DAD_BLACK))),
+    DAD_HISPANIC = as.character(DAD_HISPANIC),
+    DAD_HISPANIC = as.numeric(substr(DAD_HISPANIC, nchar(DAD_HISPANIC), nchar(DAD_HISPANIC))),
+    DAD_RACEOTHER = as.character(DAD_RACEOTHER),
+    DAD_RACEOTHER = as.numeric(substr(DAD_RACEOTHER, nchar(DAD_RACEOTHER), nchar(DAD_RACEOTHER))),
+    DAD_MASTERSPLUS = as.character(DAD_MASTERSPLUS),
+    DAD_MASTERSPLUS = as.numeric(substr(DAD_MASTERSPLUS, nchar(DAD_MASTERSPLUS), nchar(DAD_MASTERSPLUS))),
+    
+    DAD_YRSEXP_DIFF = DAD_YRSEXP - DAD_YRSEXPDIST,
+    # bucket experience
+    DAD_YRSEXP_CEIL = if_else(DAD_YRSEXP <= 18, as.character(ceil_even(DAD_YRSEXP)), "18+"),
+    DAD_YRSEXP_CEIL = if_else(DAD_YRSEXP_CEIL %in% c("0", "2"), "2", DAD_YRSEXP_CEIL),
+    DAD_YRSEXP_CEIL = factor(DAD_YRSEXP_CEIL, levels = c("2", "4", "6", "8", "10", "12", "14", "16", "18", "18+")),
+    DAD_YRSEXPDIST_CEIL = if_else(DAD_YRSEXPDIST <= 18, as.character(ceil_even(DAD_YRSEXPDIST)), "18+"),
+    DAD_YRSEXPDIST_CEIL = if_else(DAD_YRSEXPDIST_CEIL %in% c("0", "2"), "2", DAD_YRSEXPDIST_CEIL),
+    DAD_YRSEXPDIST_CEIL = factor(DAD_YRSEXPDIST_CEIL, levels = c("2", "4", "6", "8", "10", "12", "14", "16", "18", "18+")),
+    # group experience
+    DAD_YRSEXP_GRP = case_when(
+      DAD_YRSEXP >= 0 & DAD_YRSEXP <= 2 ~ "[0, 2]", # "New (0-2 yr)",
+      DAD_YRSEXP > 2 & DAD_YRSEXP <= 5 ~ "(2, 5]", # "Early career (2-5 yr)",
+      DAD_YRSEXP > 5 & DAD_YRSEXP <= 10 ~ "(5, 10]", # "Established (5-10 yr)",
+      DAD_YRSEXP > 10 & DAD_YRSEXP <= 20 ~ "(10, 20]", # "Experienced (10-20 yr)"
+      DAD_YRSEXP > 20 ~ "(20, Inf)" # "Highly experienced (20+ yr)"
+    ),
+    DAD_YRSEXP_NEW = if_else(DAD_YRSEXP >= 0 & DAD_YRSEXP <= 2, 1, if_else(is.na(DAD_YRSEXP), NA, 0)),
+    DAD_YRSEXP_EARLY = if_else(DAD_YRSEXP > 2 & DAD_YRSEXP <= 5, 1, if_else(is.na(DAD_YRSEXP), NA, 0)),
+    DAD_YRSEXP_EST = if_else(DAD_YRSEXP > 5 & DAD_YRSEXP <= 10, 1, if_else(is.na(DAD_YRSEXP), NA, 0)),
+    DAD_YRSEXP_EXP = if_else(DAD_YRSEXP > 10 & DAD_YRSEXP <= 20, 1, if_else(is.na(DAD_YRSEXP), NA, 0)),
+    DAD_YRSEXP_HIGH = if_else(DAD_YRSEXP > 20, 1, if_else(is.na(DAD_YRSEXP), NA, 0)),
+    DAD_YRSEXPDIST_GRP = case_when(
+      DAD_YRSEXPDIST >= 0 & DAD_YRSEXPDIST <= 2 ~ "[0, 2]", # "New (0-2 yr)",
+      DAD_YRSEXPDIST > 2 & DAD_YRSEXPDIST <= 5 ~ "(2, 5]", # "Early career (2-5 yr)",
+      DAD_YRSEXPDIST > 5 & DAD_YRSEXPDIST <= 10 ~ "(5, 10]", # "Established (5-10 yr)",
+      DAD_YRSEXPDIST > 10 & DAD_YRSEXPDIST <= 20 ~ "(10, 20]", # "Experienced (10-20 yr)"
+      DAD_YRSEXPDIST > 20 ~ "(20, Inf)" # "Highly experienced (20+ yr)"
+    ),
+    DAD_YRSEXPDIST_NEW = if_else(DAD_YRSEXPDIST >= 0 & DAD_YRSEXPDIST <= 2, 1, if_else(is.na(DAD_YRSEXPDIST), NA, 0)),
+    DAD_YRSEXPDIST_EARLY = if_else(DAD_YRSEXPDIST > 2 & DAD_YRSEXPDIST <= 5, 1, if_else(is.na(DAD_YRSEXPDIST), NA, 0)),
+    DAD_YRSEXPDIST_EST = if_else(DAD_YRSEXPDIST > 5 & DAD_YRSEXPDIST <= 10, 1, if_else(is.na(DAD_YRSEXPDIST), NA, 0)),
+    DAD_YRSEXPDIST_EXP = if_else(DAD_YRSEXPDIST > 10 & DAD_YRSEXPDIST <= 20, 1, if_else(is.na(DAD_YRSEXPDIST), NA, 0)),
+    DAD_YRSEXPDIST_HIGH = if_else(DAD_YRSEXPDIST > 20, 1, if_else(is.na(DAD_YRSEXPDIST), NA, 0))
+  )
+
+# generate bucket labels
+bucket_ends <- seq(2, 18, by = 2)
+bucket_labels <- c("0-2", paste0(bucket_ends[-length(bucket_ends)], "-", bucket_ends[-1]), "18+")
+bucket_labels <- c("[0, 2]", paste0("(", bucket_ends[-length(bucket_ends)], ", ", bucket_ends[-1], "]"), "(18, Inf)")
+
+# --- AGGREGATE FROM SECTION TO TEACHER LEVEL --- #
+
+# create table to compute the implied reliability of each score
+fft_rel <- fft %>%
+  filter(SECTION_ICPSR_ID %in% df$SECTION_ICPSR_ID) %>%
+  group_by(DISTRICT_ICPSR_ID, SCHOOL_ICPSR_ID, TEACHER_ICPSR_ID, GRADE) %>%
+  summarise(
+    NUM_SECTION_FFT = n_distinct(SECTION_ICPSR_ID),
+    NUM_LESSON_FFT = n_distinct(VIDEO_ICPSR_ID),
+    NUM_RATER_FFT = n_distinct(RATER),
+    across(
+      all_of(score_fft), 
+      ~ sum(!is.na(.), na.rm = T)
+    ), .groups = "drop") %>%
+  rename_with(., ~gsub("FFT_", "NUM_SCORE_FFT_", .x))
+
+# aggregate across classrooms at teacher level
+df_obs  <- df %>%
+  group_by(DISTRICT_ICPSR_ID, SCHOOL_ICPSR_ID, TEACHER_ICPSR_ID, GRADE) %>%
+  summarise(
+    across(
+      all_of(score2), 
+      ~ {
+        x <- as.numeric(.)
+        m <- mean(x, na.rm = T)
+        if (all(is.na(x))) NA else m
+      }
+    ), .groups = "drop")
+
+# combine teacher-level data with the data required to compute the implied reliability of each score
+df_obs <- full_join(fft_rel, df_obs) %>%
+  as.data.frame()
+rm(fft_rel)
+
+# compute the implied reliability of each score at teacher level
+for (i in 1:length(score)) {
+  
+  # compute reliability
+  df_obs[, paste0(score[i], "_rel")] <- met_reliability(
+    perc_teacher = fft_vd$teacher[fft_vd$score == score[i]], 
+    perc_section = fft_vd$section[fft_vd$score == score[i]], num_section = df_obs$NUM_SECTION_FFT, 
+    perc_lesson = fft_vd$lesson[fft_vd$score == score[i]], num_lesson = df_obs$NUM_LESSON_FFT,
+    perc_rater = fft_vd$rater[fft_vd$score == score[i]], num_rater = df_obs$NUM_RATER_FFT,
+    perc_residual = fft_vd$residual[fft_vd$score == score[i]], num_scores = df_obs[, paste0("NUM_SCORE_", score[i])]
+  )
+  
+  # apply shrinkage based on reliability
+  # adjusted score = MEAN + reliability * (observed score - MEAN)
+  df_obs[, paste0(score[i], "_adj")] <- c(mean(df_obs[, score[i]], na.rm = T) + 
+                                            df_obs[, paste0(score[i], "_rel")] * scale(df_obs[, score[i]], center = T, scale = F))
+  
+}
+
+# aggregate domain scores
+df_obs$FFT_CEV_adj <- rowMeans(df_obs[, paste0(instrument$Item[grepl("CEV", instrument$Domain)], "_adj")])
+df_obs$FFT_INS_adj <- rowMeans(df_obs[, paste0(instrument$Item[grepl("INS", instrument$Domain)], "_adj")])
+
+# aggregate adjusted value added measures, weighted by number of pupils
+df_vam <- df %>%
+  group_by(DISTRICT_ICPSR_ID, SCHOOL_ICPSR_ID, TEACHER_ICPSR_ID, GRADE) %>%
+  summarise(
+    VA_MATH_adj = weighted.mean(VA_MATH_adj, w = VA_MATH_N),
+    VA_BAM_adj = weighted.mean(VA_BAM_adj, w = VA_BAM_N), 
+    .groups = "drop")
+
+# combine
+df_teachers <- df_teachers %>%
+  full_join(df_obs) %>%
+  full_join(df_vam)
+rm(df_obs, df_vam)
+
+# standardise scores
+scores <- c(score2, DVs)
+for (i in 1:length(scores)) {
+  
+  df_teachers[, paste0(scores[i], "_adj_std")] <- c(scale(df_teachers[, paste0(scores[i], "_adj")], center = T, scale = T))
+  
+}
+
+# define columns that contain categorical teacher characteristics
+cols_teach <- names(df_teachers)[grepl("DAD_", names(df_teachers))]
+cols_teach <- setdiff(cols_teach, c("DAD_YRSEXPDIST", "DAD_YRSEXPDIST_GRP", "DAD_YRSEXPDIST_CEIL", "DAD_YRSEXP", "DAD_YRSEXP_GRP", "DAD_YRSEXP_CEIL", "DAD_YRSEXP_DIFF"))
+
+# define columns that contain numerical teacher characteristics
+cols_teach_num <- c("DAD_YRSEXP", "DAD_YRSEXPDIST", "DAD_YRSEXP_DIFF", "FFT_CEV_adj", "VA_MATH_adj", "VA_BAM_adj")
+
+```
+
+```{r demogs_pupils, results='asis', eval=F, message=F}
+# describe data
+cat("Data is available for", length(unique(df$SECTION_ICPSR_ID)), "classrooms, taught by", length(unique(df$TEACHER_ICPSR_ID)), "teachers, serving", sum(df$DAD_NUMSTUDENTS), "pupils in", length(unique(df$SCHOOL_ICPSR_ID)), "schools. ")
+cat("The average class size is ", round(mean(df$DAD_NUMSTUDENTS), 2), " (SD = ", round(sd(df$DAD_NUMSTUDENTS), 2), "). **Class sizes range from ", round(min(df$DAD_NUMSTUDENTS), 2), " to ", round(max(df$DAD_NUMSTUDENTS), 2), " pupils.**\n\n", sep = "")
+
+# Grade-level table
+df %>% group_by(SUBJECTLEVEL) %>%
+  summarise(
+    `Number of class sections` = length(unique(SECTION_ICPSR_ID)),
+    # `Number of teachers` = length(unique(SECTION_ICPSR_ID)),
+    `Number of pupils` = sum(DAD_NUMSTUDENTS)
+  ) %>%
+  kable(caption = "Grade and subject level of scored classroom sections") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_footnote(c("Note. State maths test and BAM were not administered in grade 9, leading to an exclusion of all grade 9 class sections.", "Most teachers in elementary grades (4 and 5) were subject matter generalists, teaching multiple subjects to a single group of pupils. Most teachers in middle grades (6 to 8) were specialist teachers, teaching the same subject to multiple groups of pupils."), notation = "none") %>%
+  print()
+
+# Grade-level table
+df %>% group_by(GRADE) %>%
+  summarise(
+    `Number of class sections` = length(unique(SECTION_ICPSR_ID)),
+    # `Number of teachers` = length(unique(SECTION_ICPSR_ID)),
+    `Number of pupils` = sum(DAD_NUMSTUDENTS)
+  ) %>%
+  kable(caption = "Grade level of scored classroom sections") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_footnote(c("Note. State maths test and BAM were not administered in grade 9, leading to an exclusion of all grade 9 class sections.", "Most teachers in elementary grades (4 and 5) were subject matter generalists, teaching multiple subjects to a single group of pupils. Most teachers in middle grades (6 to 8) were specialist teachers, teaching the same subject to multiple groups of pupils."), notation = "none") %>%
+  print()
+
+# create table displaying descriptives of pupil characteristics
+tmp <- full_join(
+  df %>%
+    summarise(
+      across(all_of(c("DAD_AVERAGEAGE", cols_pup)), ~weighted.mean(.x, w = DAD_NUMSTUDENTS, na.rm = T))
+    ) %>%
+    tidyr::pivot_longer(everything(), names_to = "Characteristic", values_to = "Weighted mean"),
+  df %>%
+    summarise(
+      across(all_of(c("DAD_AVERAGEAGE", cols_pup)), ~weighted.sd(.x, w = DAD_NUMSTUDENTS, na.rm = T))
+    ) %>%
+    tidyr::pivot_longer(everything(), names_to = "Characteristic", values_to = "Weighted SD")
+) %>%
+  full_join(.,
+            df %>%
+              summarise(
+                across(all_of(c("DAD_AVERAGEAGE", cols_pup)), ~sum(!is.na(.x)))
+              ) %>%
+              tidyr::pivot_longer(everything(), names_to = "Characteristic", values_to = "N")
+  ) %>%
+  full_join(data.frame(Characteristic = c("DAD_AVERAGEAGE", cols_pup), Description = c("Average age", cols_pup_lbl)), .) %>%
+  mutate(Characteristic = gsub("DAD_PERC", "", Characteristic)) %>%
+  mutate(Characteristic = gsub("DAD_", "", Characteristic)) %>%
+  mutate(Characteristic = factor(Characteristic, levels = c("AVERAGEAGE", gsub("DAD_PERC", "", cols_pup)))) 
+tmp %>%
+  kable(caption = "Pupil-level characteristics", digits = 2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_footnote(paste("Note. Data is available for", length(unique(df$SECTION_ICPSR_ID)), "classrooms, taught by", length(unique(df$TEACHER_ICPSR_ID)), "teachers, serving", sum(df$DAD_NUMSTUDENTS), "pupils in", length(unique(df$SCHOOL_ICPSR_ID)), "schools. The number of classrooms with non-missing data for each characteristic is included in the table. Weighted means and SDs are calculated using the class size. Weighted statistics reflect the distribution of each characteristic across all pupils in the sample."), notation = "none") #%>% print()
+
+# violin plot for demographic proportions
+tmp <- tmp %>%
+  filter(Characteristic %in% c(gsub("DAD_PERC", "", cols_pup))) %>%
+  mutate(
+    lower = `Weighted mean` - `Weighted SD`/sqrt(N),
+    upper = `Weighted mean` + `Weighted SD`/sqrt(N)
+  )
+
+df %>%
+  select(cols_pup) %>%
+  tidyr::pivot_longer(everything(), names_to = "Characteristic", values_to = "Proportion") %>%
+  mutate(Characteristic = gsub("DAD_PERC", "", Characteristic)) %>%
+  mutate(Characteristic = factor(Characteristic, levels = c(gsub("DAD_PERC", "", cols_pup)))) %>%
+  ggplot() +
+  # geom_point(alpha = .4, size = 1, stroke = 0, position = position_jitter(height = 0, width = 0.05), col = navy) +
+  geom_violin(aes(x = Characteristic, y = Proportion)) +
+  # geom_boxplot(width = .15, outliers = F, alpha = .2) +
+  geom_errorbar(data = tmp, 
+                mapping = aes(x = Characteristic, ymin = lower, ymax = upper), width = .05) +
+  geom_point(data = tmp, 
+             aes(x = Characteristic, y = `Weighted mean`), stroke = 0, col = coral) +
+  facet_wrap(vars(Characteristic), scales = "free_x", nrow = 2) +
+  ambition_theme +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.x = element_blank()
+  )
+cat("\n\nNote. The coral dots represent the weighted means. Error bars represent +/- 1 SE.\n\n")
+
+```
+
+```{r demogs_teachers, results='asis', eval=F, message=F}
+# create table displaying categorical descriptives of teacher characteristics
+full_join(
+  df_teachers %>%
+    summarise(
+      across(all_of(c(cols_teach)), ~sum(.x, na.rm = T))
+    ) %>%
+    tidyr::pivot_longer(everything(), names_to = "Characteristic", values_to = "Count"),
+  df_teachers %>%
+    summarise(
+      across(all_of(c(cols_teach)), ~sum(!is.na(.x), na.rm = T))
+    ) %>%
+    tidyr::pivot_longer(everything(), names_to = "Characteristic", values_to = "Non-missing observations")
+) %>%
+  mutate(
+    `Proportion of non-missing observations` = Count/`Non-missing observations`,
+    `Proportion of sample size` = Count/length(unique(df_teachers$TEACHER_ICPSR_ID))
+  ) %>%
+  kable(caption = "Descriptive information on teachers teaching the class sections", digits = 3) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_footnote(c(paste0("Note. This table indicates the counts of teachers in the analytical sample that indicated a certain demographic characteristic. The information may be missing for some teachers in the total sample of ", nrow(df_teachers), " teachers."), "Experience was grouped as NEW = [0, 2] years, EARLY = (2, 5] years, EST = (5, 10] years, EXP = (10, 20] years, HIGH = (20, Inf) years."), notation = "none") %>%
+  print()
+
+# create table displaying descriptives of numeric teacher characteristics
+full_join(
+  df_teachers %>%
+    summarise(
+      across(all_of(c(cols_teach_num)), ~mean(.x, na.rm = T))
+    ) %>%
+    tidyr::pivot_longer(everything(), names_to = "Characteristic", values_to = "Mean"),
+  df_teachers %>%
+    summarise(
+      across(all_of(c(cols_teach_num)), ~sd(.x, na.rm = T))
+    ) %>%
+    tidyr::pivot_longer(everything(), names_to = "Characteristic", values_to = "SD")
+) %>%
+  full_join(.,
+            df_teachers %>%
+              summarise(
+                across(all_of(c(cols_teach_num)), ~sum(!is.na(.x)))
+              ) %>%
+              tidyr::pivot_longer(everything(), names_to = "Characteristic", values_to = "N")
+  ) %>%
+  kable(caption = "Descriptive information on teachers teaching the class sections (continued)", digits = 3) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_footnote(c(paste0("Note. This table indicates mean and SD of teachers in the analytical sample that indicated a certain demographic characteristic. The information may be missing for some teachers in the total sample of ", nrow(df_teachers), " teachers."), "DAD_YRSEXP_DIFF is the difference between total teaching experience DAD_YRSEXP and teaching experience in the district DAD_YRSEXPDIST.", "CEV, VA_MATH & VA_BAM represent teacher-level aggregates. FFT scores were adjusted at teacher level. VAMs were adjusted at section level and then aggregated at the teacher level using weighted means, accounting for the pupils included in the section-level VAMs."), notation = "none") %>%
+  print()
+
+# correlation tests
+xs <- c("DAD_YRSEXP", "DAD_YRSEXPDIST")
+ys <- c(paste0(c(score2[1:5], DVs), "_adj_std"))
+for (j in 1:length(xs)) {
+  for (i in 1:length(ys)) {
+    cor <- cor.test(df_teachers[, xs[j]], df_teachers[, ys[i]])
+    cor <- data.frame(x = xs[j],
+                      y = ys[i],
+                      cor = cor$estimate,
+                      ci_l = cor$conf.int[1],
+                      ci_u = cor$conf.int[2],
+                      df = cor$parameter,
+                      t = cor$statistic,
+                      p = cor$p.value,
+                      N = sum(!is.na(df_teachers[, xs[j]]))
+    )
+    
+    if (i == 1 & j == 1) df_cor <- cor else df_cor <- bind_rows(df_cor, cor)
+  }
+}
+df_cor <- df_cor %>%
+  mutate(desc = paste0("r = ", round(cor, 2), ", 95% CI [", round(ci_l, 2), "; ", round(ci_l, 2), "], t(", df, ") = ", round(t, 3), ", p = ", round(p, 3)))
+
+# print count data to markdown
+df_cor %>%
+  select(-desc) %>%
+  kable(caption = "Correlation of teaching experience with necessary condition and outcomes", digits = 3, row.names = F) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_footnote(paste0("Note. Data on DAD_YRSEXP is available for ", sum(!is.na(df_teachers$DAD_YRSEXP)), " teachers. Data on DAD_YRSEXPDIST is available for ", sum(!is.na(df_teachers$DAD_YRSEXPDIST)), " teachers."), notation = "none")
+
+
+# TEACHING EXPERIENCE - 2-year buckets # 
+
+# create table displaying observation score descriptives
+tmp <- full_join(
+  df_teachers %>%
+    group_by(DAD_YRSEXP_CEIL) %>%
+    summarise(
+      across(all_of(paste0(c(score2[1], DVs), "_adj_std")), ~mean(.x, na.rm = T))
+    ) %>%
+    tidyr::pivot_longer(all_of(paste0(c(score2[1], DVs), "_adj_std")), names_to = "Domain", values_to = "Mean"),
+  df_teachers %>%
+    group_by(DAD_YRSEXP_CEIL) %>%
+    summarise(
+      across(all_of(paste0(c(score2[1], DVs), "_adj_std")), ~sd(.x, na.rm = T))
+    ) %>%
+    tidyr::pivot_longer(all_of(paste0(c(score2[1], DVs), "_adj_std")), names_to = "Domain", values_to = "SD")
+) %>%
+  full_join(.,
+            df_teachers %>%
+              group_by(DAD_YRSEXP_CEIL) %>%
+              summarise(
+                across(all_of(paste0(c(score2[1], DVs), "_adj_std")), ~sum(!is.na(.x)))
+              ) %>%
+              tidyr::pivot_longer(all_of(paste0(c(score2[1], DVs), "_adj_std")), names_to = "Domain", values_to = "N")
+  ) %>%
+  filter(!is.na(DAD_YRSEXP_CEIL)) %>%
+  mutate(
+    SE = SD/sqrt(N),
+    Domain = gsub("FFT_|VA_", "", gsub("_adj_std", "", Domain)),
+    Domain = factor(Domain, levels = c("CEV", "MATH", "BAM")),
+    col = case_when(
+      Domain == "CEV" ~ cols_obs["FFT_CEV"],
+      Domain == "MATH" ~ cols_vam["MATH"],
+      Domain == "BAM" ~ cols_vam["BAM"]
+    )
+  ) %>%
+  arrange(DAD_YRSEXP_CEIL, Domain) %>%
+  left_join(
+    data.frame(DAD_YRSEXP_CEIL = sort(unique(df_teachers$DAD_YRSEXP_CEIL)),
+               YRSEXP = bucket_labels),
+    .
+  )
+
+
+# print count data to markdown
+tmp %>%
+  select(-c(SE, col, DAD_YRSEXP_CEIL)) %>%
+  kable(caption = "Underlying count data for figure - Years of teaching experience", digits = 2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") 
+
+#   plot means and SE
+cat("\n\n")
+cat("#### **Figure **\n")
+cat("#### *Relationship between teaching experience, necessary condition and outcomes*\n", sep = "")  
+p <- ggplot(data = tmp, aes(x = YRSEXP, y = Mean)) +
+  geom_errorbar(aes(ymin = Mean - 1.96*SE, ymax = Mean + 1.96*SE), width = .1) +
+  geom_point(aes(color = col)) +
+  facet_wrap(vars(Domain), ncol = 1) +
+  scale_color_identity() +
+  scale_x_discrete(labels = bucket_labels) +
+  xlab("Years of teaching experience") + ylab("Mean [95% CI]") +
+  coord_cartesian(ylim = c(-1.1, 1.1)) +
+  ambition_theme
+p
+
+
+# TEACHING EXPERIENCE IN DISTRICT - 2-year buckets # 
+
+# create table displaying observation score descriptives
+tmp <- full_join(
+  df_teachers %>%
+    group_by(DAD_YRSEXPDIST_CEIL) %>%
+    summarise(
+      across(all_of(paste0(c(score2[1], DVs), "_adj_std")), ~mean(.x, na.rm = T))
+    ) %>%
+    tidyr::pivot_longer(all_of(paste0(c(score2[1], DVs), "_adj_std")), names_to = "Domain", values_to = "Mean"),
+  df_teachers %>%
+    group_by(DAD_YRSEXPDIST_CEIL) %>%
+    summarise(
+      across(all_of(paste0(c(score2[1], DVs), "_adj_std")), ~sd(.x, na.rm = T))
+    ) %>%
+    tidyr::pivot_longer(all_of(paste0(c(score2[1], DVs), "_adj_std")), names_to = "Domain", values_to = "SD")
+) %>%
+  full_join(.,
+            df_teachers %>%
+              group_by(DAD_YRSEXPDIST_CEIL) %>%
+              summarise(
+                across(all_of(paste0(c(score2[1], DVs), "_adj_std")), ~sum(!is.na(.x)))
+              ) %>%
+              tidyr::pivot_longer(all_of(paste0(c(score2[1], DVs), "_adj_std")), names_to = "Domain", values_to = "N")
+  ) %>%
+  filter(!is.na(DAD_YRSEXPDIST_CEIL)) %>%
+  mutate(
+    SE = SD/sqrt(N),
+    DAD_YRSEXPDIST_CEIL = factor(DAD_YRSEXPDIST_CEIL, levels = c("2", "4", "6", "8", "10", "12", "14", "16", "18", "18+")),
+    Domain = gsub("FFT_|VA_", "", gsub("_adj_std", "", Domain)),
+    Domain = factor(Domain, levels = c("CEV", "MATH", "BAM")),
+    col = case_when(
+      Domain == "CEV" ~ cols_obs["FFT_CEV"],
+      Domain == "MATH" ~ cols_vam["MATH"],
+      Domain == "BAM" ~ cols_vam["BAM"]
+    )
+  ) %>%
+  arrange(DAD_YRSEXPDIST_CEIL, Domain) %>%
+  left_join(
+    data.frame(DAD_YRSEXPDIST_CEIL = sort(unique(df_teachers$DAD_YRSEXPDIST_CEIL)),
+               YRSEXPDIST = bucket_labels),
+    .
+  )
+
+# print count data to markdown
+tmp %>%
+  select(-c(SE, col, DAD_YRSEXPDIST_CEIL)) %>%
+  kable(caption = "Underlying count data for figure - Years of teaching experience in dictrict", digits = 2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") 
+
+#   plot means and SE
+cat("\n\n")
+cat("#### **Figure **\n")
+cat("#### *Relationship between teaching experience in district, necessary condition and outcomes*\n", sep = "")  
+p <- ggplot(data = tmp, aes(x = YRSEXPDIST, y = Mean)) +
+  geom_errorbar(aes(ymin = Mean - 1.96*SE, ymax = Mean + 1.96*SE), width = .1) +
+  geom_point(aes(color = col)) +
+  facet_wrap(vars(Domain), ncol = 1) +
+  scale_color_identity() +
+  scale_x_discrete(labels = bucket_labels) +
+  xlab("Years of teaching experience in district") + ylab("Mean [95% CI]") +
+  coord_cartesian(ylim = c(-1.1, 1.1)) +
+  ambition_theme
+p
+
+# TEACHING EXPERIENCE - groups # 
+
+# create table displaying observation score descriptives
+tmp <- full_join(
+  df_teachers %>%
+    group_by(DAD_YRSEXP_GRP) %>%
+    summarise(
+      across(all_of(paste0(c(score2[1], DVs), "_adj_std")), ~mean(.x, na.rm = T))
+    ) %>%
+    tidyr::pivot_longer(all_of(paste0(c(score2[1], DVs), "_adj_std")), names_to = "Domain", values_to = "Mean"),
+  df_teachers %>%
+    group_by(DAD_YRSEXP_GRP) %>%
+    summarise(
+      across(all_of(paste0(c(score2[1], DVs), "_adj_std")), ~sd(.x, na.rm = T))
+    ) %>%
+    tidyr::pivot_longer(all_of(paste0(c(score2[1], DVs), "_adj_std")), names_to = "Domain", values_to = "SD")
+) %>%
+  full_join(.,
+            df_teachers %>%
+              group_by(DAD_YRSEXP_GRP) %>%
+              summarise(
+                across(all_of(paste0(c(score2[1], DVs), "_adj_std")), ~sum(!is.na(.x)))
+              ) %>%
+              tidyr::pivot_longer(all_of(paste0(c(score2[1], DVs), "_adj_std")), names_to = "Domain", values_to = "N")
+  ) %>%
+  filter(!is.na(DAD_YRSEXP_GRP)) %>%
+  mutate(
+    SE = SD/sqrt(N),
+    DAD_YRSEXP_GRP = factor(DAD_YRSEXP_GRP, levels = c("[0, 2]", "(2, 5]", "(5, 10]", "(10, 20]", "(20, Inf)")),
+    Domain = gsub("FFT_|VA_", "", gsub("_adj_std", "", Domain)),
+    Domain = factor(Domain, levels = c("CEV", "MATH", "BAM")),
+    col = case_when(
+      Domain == "CEV" ~ cols_obs["FFT_CEV"],
+      Domain == "MATH" ~ cols_vam["MATH"],
+      Domain == "BAM" ~ cols_vam["BAM"]
+    )
+  ) %>%
+  arrange(DAD_YRSEXP_GRP, Domain)
+
+# print count data to markdown
+tmp %>%
+  select(-c(SE, col)) %>%
+  kable(caption = "Underlying count data for figure - Years of teaching experience", digits = 2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") 
+
+#   plot means and SE
+cat("\n\n")
+cat("#### **Figure **\n")
+cat("#### *Relationship between teaching experience, necessary condition and outcomes*\n", sep = "")  
+p <- ggplot(data = tmp, aes(x = DAD_YRSEXP_GRP, y = Mean)) +
+  geom_errorbar(aes(ymin = Mean - 1.96*SE, ymax = Mean + 1.96*SE), width = .1) +
+  geom_point(aes(color = col)) +
+  facet_wrap(vars(Domain), ncol = 1) +
+  scale_color_identity() +
+  xlab("Years of teaching experience") + ylab("Mean [95% CI]") +
+  coord_cartesian(ylim = c(-1.1, 1.1)) +
+  ambition_theme
+p
+
+# TEACHING EXPERIENCE IN DISTRICTS - groups # 
+
+# create table displaying observation score descriptives
+tmp <- full_join(
+  df_teachers %>%
+    group_by(DAD_YRSEXPDIST_GRP) %>%
+    summarise(
+      across(all_of(paste0(c(score2[1], DVs), "_adj_std")), ~mean(.x, na.rm = T))
+    ) %>%
+    tidyr::pivot_longer(all_of(paste0(c(score2[1], DVs), "_adj_std")), names_to = "Domain", values_to = "Mean"),
+  df_teachers %>%
+    group_by(DAD_YRSEXPDIST_GRP) %>%
+    summarise(
+      across(all_of(paste0(c(score2[1], DVs), "_adj_std")), ~sd(.x, na.rm = T))
+    ) %>%
+    tidyr::pivot_longer(all_of(paste0(c(score2[1], DVs), "_adj_std")), names_to = "Domain", values_to = "SD")
+) %>%
+  full_join(.,
+            df_teachers %>%
+              group_by(DAD_YRSEXPDIST_GRP) %>%
+              summarise(
+                across(all_of(paste0(c(score2[1], DVs), "_adj_std")), ~sum(!is.na(.x)))
+              ) %>%
+              tidyr::pivot_longer(all_of(paste0(c(score2[1], DVs), "_adj_std")), names_to = "Domain", values_to = "N")
+  ) %>%
+  filter(!is.na(DAD_YRSEXPDIST_GRP)) %>%
+  mutate(
+    SE = SD/sqrt(N),
+    DAD_YRSEXPDIST_GRP = factor(DAD_YRSEXPDIST_GRP, levels = c("[0, 2]", "(2, 5]", "(5, 10]", "(10, 20]", "(20, Inf)")),
+    Domain = gsub("FFT_|VA_", "", gsub("_adj_std", "", Domain)),
+    Domain = factor(Domain, levels = c("CEV", "MATH", "BAM")),
+    col = case_when(
+      Domain == "CEV" ~ cols_obs["FFT_CEV"],
+      Domain == "MATH" ~ cols_vam["MATH"],
+      Domain == "BAM" ~ cols_vam["BAM"]
+    )
+  ) %>%
+  arrange(DAD_YRSEXPDIST_GRP, Domain)
+
+# print count data to markdown
+tmp %>%
+  select(-c(SE, col)) %>%
+  kable(caption = "Underlying count data for figure - Years of teaching experience in the district", digits = 2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") 
+
+#   plot means and SE
+cat("\n\n")
+cat("#### **Figure **\n")
+cat("#### *Relationship between teaching experience in district, necessary condition and outcomes*\n", sep = "")  
+p <- ggplot(data = tmp, aes(x = DAD_YRSEXPDIST_GRP, y = Mean)) +
+  geom_errorbar(aes(ymin = Mean - 1.96*SE, ymax = Mean + 1.96*SE), width = .1) +
+  geom_point(aes(color = col)) +
+  facet_wrap(vars(Domain), ncol = 1) +
+  scale_color_identity() +
+  xlab("Years of teaching experience in the district") + ylab("Mean [95% CI]") +
+  coord_cartesian(ylim = c(-1.1, 1.1)) +
+  ambition_theme
+p
+
+# --- WITHIN-SCHOOL VARIATION --- #
+
+# compute within-school variation: section level
+tmp <- full_join(df %>%
+                   group_by(SCHOOL_ICPSR_ID) %>%
+                   summarise(
+                     across(all_of(paste0(c(score2[1], DVs), "_adj")), ~mean(.x, na.rm = T))
+                   ) %>%
+                   tidyr::pivot_longer(all_of(paste0(c(score2[1], DVs), "_adj")), names_to = "Domain", values_to = "School_mean"),
+                 df %>%
+                   group_by(SCHOOL_ICPSR_ID) %>%
+                   summarise(
+                     across(all_of(paste0(c(score2[1], DVs), "_adj")), ~sd(.x, na.rm = T))
+                   ) %>%
+                   tidyr::pivot_longer(all_of(paste0(c(score2[1], DVs), "_adj")), names_to = "Domain", values_to = "School_sd")) %>%
+  ungroup() 
+
+# add to markdown
+tmp %>% 
+  group_by(Domain) %>%
+  summarise(
+    avg_within_sd = mean(School_sd, na.rm = T), # SD is NA when there is only one section per school
+    within_var = mean(School_sd^2, na.rm = T)
+  ) %>% 
+  right_join(tmp %>% 
+               group_by(Domain) %>%
+               summarise(
+                 between_sd = sd(School_mean, na.rm = T),
+                 between_var = between_sd^2)
+  ) %>%
+  mutate(
+    total_var = within_var + between_var,
+    within_pct = within_var / total_var,
+    between_pct = between_var / total_var
+  ) %>%
+  kable(caption = "Within vs between school variation - section level", digits = 3, row.names = F) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_footnote(paste0("Note. Data is available for ", nrow(df), " classrooms. avg_within_sd is the average within-school SD. between_sd is the SD of school means. Classrooms were not aggregated at teacher-level before aggregating at school level."), notation = "none")
+
+# compute within-school variation: teacher level
+tmp <- full_join(df_teachers %>%
+                   group_by(SCHOOL_ICPSR_ID) %>%
+                   summarise(
+                     across(all_of(paste0(c(score2[1], DVs), "_adj")), ~mean(.x, na.rm = T))
+                   ) %>%
+                   tidyr::pivot_longer(all_of(paste0(c(score2[1], DVs), "_adj")), names_to = "Domain", values_to = "School_mean"),
+                 df_teachers %>%
+                   group_by(SCHOOL_ICPSR_ID) %>%
+                   summarise(
+                     across(all_of(paste0(c(score2[1], DVs), "_adj")), ~sd(.x, na.rm = T))
+                   ) %>%
+                   tidyr::pivot_longer(all_of(paste0(c(score2[1], DVs), "_adj")), names_to = "Domain", values_to = "School_sd")) %>%
+  ungroup() 
+
+# add to markdown
+tmp %>% 
+  group_by(Domain) %>%
+  summarise(
+    avg_within_sd = mean(School_sd, na.rm = T), # SD is NA when there is only one section per school
+    within_var = mean(School_sd^2, na.rm = T)
+  ) %>% 
+  right_join(tmp %>% 
+               group_by(Domain) %>%
+               summarise(
+                 between_sd = sd(School_mean, na.rm = T),
+                 between_var = between_sd^2)
+  ) %>%
+  mutate(
+    total_var = within_var + between_var,
+    within_pct = within_var / total_var,
+    between_pct = between_var / total_var
+  ) %>%
+  kable(caption = "Within vs between school variation - teacher level", digits = 3, row.names = F) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_footnote(paste0("Note. Data is available for ", nrow(df_teachers), " Teachers avg_within_sd is the average within-school SD. between_sd is the SD of school means. Classrooms were aggregated at teacher-level before aggregating at school level."), notation = "none")
+```
+
+```{r scale, eval = F, warning = F, results='asis'}
+# Describe data
+cat("Segment-level data is available for", nrow(data), "lesson segments.\n\n")
+
+# data on observation score distribution
+df_long <- tidyr::pivot_longer(data, cols = names(data),
+                               names_to = "item") %>%
+  group_by(item, value) %>%
+  summarise(count = n()) %>%
+  mutate(item = factor(item, levels = score),
+         value = factor(value, levels = levels)) %>%
+  left_join(data.frame(item = score, domain = domain), .)
+
+kable(df_long, caption = "Underlying count data for Observation score distributions figure") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_footnote("Note. The data shows the count of lesson video segments that have received a certain rating value for each domain of the FFT.", notation = "none") %>%
+  print()
+
+
+# plot of observation score distribution
+cat("\n\n")
+cat("#### **Figure**\n")
+cat("#### *Observation score distributions*\n")  
+p <- ggplot(data = df_long, aes(x = item, y = count, fill = value)) +
+  geom_bar(stat = "identity", position = position_stack()) +
+  ambition_theme +
+  scale_fill_manual(values = cols)  +
+  facet_wrap(domain~item, scales = "free_x", nrow = nrow) +
+  theme(axis.text.x = element_blank()) +
+  labs(x = "Item",
+       y = "Count segments",
+       fill = "Rating",
+       caption = c(paste(1:length(scale), "-", scale, collapse = ", "))) +
+  guides(fill = guide_legend(nrow = 1)) +
+  theme(strip.text = element_text(size = 9),
+        plot.caption = element_text(size = 9))
+print(p)
+
+
+# scatter plot matrix
+cat("\n\n")
+cat("#### **Figure**\n")
+cat("#### *Unadjusted observation scores aggregated at classroom level*\n")  
+df %>%
+  select(all_of(score2)) %>%
+  ggpairs(upper = list(continuous = wrap(ggally_cor, displayGrid = FALSE)),
+          lower = list(continuous = wrap(ggally_density2)),
+          diag = list(continuous = wrap(ggally_densityDiag2))
+  )
+
+cat("\n\n")
+cat("#### **Figure**\n")
+cat("#### *Unadjusted observation scores aggregated at classroom level*\n")  
+df %>%
+  select(all_of(score2[1:5])) %>%
+  ggpairs(upper = list(continuous = wrap(ggally_cor, displayGrid = FALSE)),
+          lower = list(continuous = wrap(ggally_density2)),
+          diag = list(continuous = wrap(ggally_densityDiag2))
+  )
+
+```
+
+```{r adj, eval = F, warning = F, results='asis'}
+# create data frame
+tmp <- full_join(df %>%
+                   select(all_of(c("SECTION_ICPSR_ID", score2))) %>%
+                   tidyr::pivot_longer(!SECTION_ICPSR_ID, names_to = "Domain", values_to = "Score_Raw")
+                 ,
+                 
+                 df %>%
+                   select(all_of(c("SECTION_ICPSR_ID", paste0(score2, "_adj")))) %>%
+                   tidyr::pivot_longer(!SECTION_ICPSR_ID, names_to = "Domain", values_to = "Score_Adjusted") %>%
+                   mutate(Domain = gsub("_adj", "", Domain))
+) %>%
+  mutate(Domain = factor(Domain, levels = score2))
+
+# add information for colouring
+tints_obs <- col.tint(cols_obs, tint = .4)
+names(tints_obs) <- names(cols_obs)
+
+tmp$fill_col <- cols_obs[tmp$Domain]
+tmp$tint_col <- tints_obs[tmp$Domain]
+
+for (i in 1:length(cols_obs)) {
+  if (i == 1) {
+    lvl_obs <- c(tints_obs[i], cols_obs[i])
+  } else {
+    lvl_obs <- c(lvl_obs, tints_obs[i], cols_obs[i])
+  }
+}
+
+
+# create split violin plot
+cat("\n\n")
+cat("#### **Figure**\n")
+cat("#### *Distribution of raw and adjusted observation scores*\n")  
+tmp %>%
+  tidyr::pivot_longer(., cols = starts_with("Score"), names_to = "Type of score", values_to = "Score") %>%
+  mutate(
+    `Type of score` = gsub("Score_", "", `Type of score`),
+    `Type of score` = factor(`Type of score`, levels = c("Raw", "Adjusted")), 
+    Domain = factor(Domain, levels = score2),
+    tint_col = if_else(`Type of score` == "Raw", col.tint(fill_col, tint = 0.4), fill_col),
+    tint_col = factor(tint_col, levels = lvl_obs)
+  ) %>%
+  ggplot(aes(x = Domain, y = Score)) +
+  geom_split_violin(aes(fill = tint_col), show.legend = F) +
+  stat_summary(fun = mean, geom = "crossbar", fatten = 1, width = .2, position = position_dodge(width = .2), show.legend = F) +
+  ambition_theme +
+  xlab("Raw vs. adjusted") + ylab("Score") +
+  facet_wrap(vars(Domain), scales = "free_x", nrow = nrow) +
+  scale_fill_identity() +
+  coord_cartesian(ylim = c(1, 4)) +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  )
+
+p_vio <- tmp %>%
+  tidyr::pivot_longer(., cols = starts_with("Score"), names_to = "Type of score", values_to = "Score") %>%
+  mutate(
+    `Type of score` = gsub("Score_", "", `Type of score`),
+    `Type of score` = factor(`Type of score`, levels = c("Raw", "Adjusted")), 
+    Domain = factor(Domain, levels = score2),
+    tint_col = if_else(`Type of score` == "Raw", col.tint(fill_col, tint = 0.4), fill_col),
+    tint_col = factor(tint_col, levels = lvl_obs)
+  ) %>%
+  filter(Domain %in% score2[1:5]) %>%
+  ggplot(aes(x = Domain, y = Score)) +
+  geom_split_violin(aes(fill = tint_col), show.legend = F) +
+  stat_summary(fun = mean, geom = "crossbar", fatten = 1, width = .2, position = position_dodge(width = .2), show.legend = F) +
+  ambition_theme +
+  xlab("Raw vs. adjusted") + ylab("Score") +
+  facet_wrap(vars(Domain), scales = "free_x", nrow = 1) +
+  scale_fill_identity() +
+  coord_cartesian(ylim = c(1, 4)) +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  )
+
+# create table displaying descriptives of raw domain scores
+full_join(
+  df %>%
+    summarise(
+      across(all_of(c(score2)), ~weighted.mean(.x, w = DAD_NUMSTUDENTS, na.rm = T))
+    ) %>%
+    tidyr::pivot_longer(everything(), names_to = "Domain", values_to = "Weighted mean"),
+  df %>%
+    summarise(
+      across(all_of(c(score2)), ~weighted.sd(.x, w = DAD_NUMSTUDENTS, na.rm = T))
+    ) %>%
+    tidyr::pivot_longer(everything(), names_to = "Domain", values_to = "Weighted SD")
+) %>%
+  kable(caption = "Raw observation scores", digits = 2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_footnote(c(paste0("Note. Data from ", nrow(df), " classrooms is included. Weighted means and SDs are calculated using the class size. Weighted statistics reflect the distribution of each characteristic across all pupils in the sample."), "FFT_CEV and FFT_INS refer to the domain scores for classroom environment and instruction, respectively, computed as the mean of their indicators."), notation = "none") %>% 
+  print()
+
+# create table displaying descriptives of adjusted domain scores
+full_join(
+  df %>%
+    summarise(
+      across(all_of(c(paste0(score2, "_adj"))), ~weighted.mean(.x, w = DAD_NUMSTUDENTS, na.rm = T))
+    ) %>%
+    tidyr::pivot_longer(everything(), names_to = "Domain", values_to = "Weighted mean"),
+  df %>%
+    summarise(
+      across(all_of(c(paste0(score2, "_adj"))), ~weighted.sd(.x, w = DAD_NUMSTUDENTS, na.rm = T))
+    ) %>%
+    tidyr::pivot_longer(everything(), names_to = "Domain", values_to = "Weighted SD")
+) %>%
+  mutate(Domain = gsub("_adj", "", Domain)) %>%
+  kable(caption = "Adjusted observation scores", digits = 2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_footnote(paste0("Note. Data from ", nrow(df), " classrooms is included. Weighted means and SDs are calculated using the class size. Weighted statistics reflect the distribution of each characteristic across all pupils in the sample."), notation = "none") %>% 
+  print()
+
+# create scatter plot
+cat("\n\n")
+cat("#### **Figure**\n")
+cat("#### *Relationship between raw and adjusted observation scores*\n")  
+ggplot(data = tmp, aes(x = Score_Raw, y = Score_Adjusted)) +
+  geom_point(alpha = 0) +
+  geom_smooth(method = "lm", se = T, fullrange = T, color = black) +
+  geom_density2d(aes(col = Domain)) +
+  stat_cor(method = "pearson", r.accuracy = 0.001, p.accuracy = 0.001, cor.coef.name = "r", 
+           label.sep = "\n", label.x = 1, label.y = 0.875*4) +
+  geom_xsidehistogram(aes(fill = tint_col), binwidth = 0.25) +
+  geom_ysidehistogram(aes(fill = fill_col), binwidth = 0.25) +
+  coord_cartesian(xlim = c(1, 4), ylim = c(1, 4)) +
+  ambition_theme +
+  xlab("Raw observation score") + ylab("Adjusted observation score") +
+  facet_wrap(vars(Domain), nrow = nrow) +
+  scale_color_manual(values = cols_obs) +
+  scale_fill_identity() +
+  theme(
+    legend.position = "none",
+    ggside.axis.text = element_blank(),
+    ggside.axis.ticks = element_blank()
+  )
+
+p_scat <- ggplot(data = tmp[tmp$Domain %in% score2[1:5], ], aes(x = Score_Raw, y = Score_Adjusted)) +
+  geom_point(alpha = 0) +
+  geom_smooth(method = "lm", se = T, fullrange = T, color = black) +
+  geom_density2d(aes(col = Domain)) +
+  stat_cor(method = "pearson", r.accuracy = 0.001, p.accuracy = 0.001, cor.coef.name = "r", 
+           label.sep = "\n", label.x = 1, label.y = 0.875*4) +
+  coord_cartesian(xlim = c(1, 4), ylim = c(1, 4)) +
+  ambition_theme +
+  xlab("Raw") + ylab("Adjusted") +
+  # ggtitle("Relationship between raw and adjusted observation scores") +
+  facet_wrap(vars(Domain), nrow = 1) +
+  scale_color_manual(values = cols_obs) +
+  scale_fill_identity() +
+  theme(
+    legend.position = "none",
+    ggside.axis.text = element_blank(),
+    ggside.axis.ticks = element_blank()
+  )
+cat("\n\n")
+cat("#### **Figure**\n")
+cat("#### *Raw and adjusted observation scores*\n")
+ggarrange(p_vio, p_scat, nrow = 2, labels = c("A", "B"))
+
+# scatter plot matrix
+cat("\n\n")
+cat("#### **Figure**\n")
+cat("#### *Adjusted observation scores aggregated at classroom level*\n")  
+df %>%
+  select(all_of(c(paste0(score2, "_adj")))) %>%
+  ggpairs(upper = list(continuous = wrap(ggally_cor, displayGrid = FALSE)),
+          lower = list(continuous = wrap(ggally_density2)),
+          diag = list(continuous = wrap(ggally_densityDiag2))
+  )
+# scatter plot matrix
+cat("\n\n")
+cat("#### **Figure**\n")
+cat("#### *Adjusted observation scores aggregated at classroom level*\n")  
+df %>%
+  select(all_of(c(paste0(score2[1:5], "_adj")))) %>%
+  ggpairs(upper = list(continuous = wrap(ggally_cor, displayGrid = FALSE)),
+          lower = list(continuous = wrap(ggally_density2)),
+          diag = list(continuous = wrap(ggally_densityDiag2))
+  )
+```
+
+```{r vam, results='asis', warning=F, message=F, eval=FALSE}
+# define all VAMs
+VAM <- c("VA_NOAGGR_MATH",
+         "VA_MATH", "VA_MATH_std", "VA_MATH_adj", "VA_MATH_adj_std", 
+         "VA_NOAGGR_BAM",
+         "VA_BAM", "VA_BAM_std", "VA_BAM_adj", "VA_BAM_adj_std")
+
+# create table displaying descriptives of raw domain scores
+full_join(
+  df %>%
+    summarise(
+      across(all_of(c(VAM)), ~weighted.mean(.x, w = DAD_NUMSTUDENTS, na.rm = T))
+    ) %>%
+    tidyr::pivot_longer(everything(), names_to = "VAM", values_to = "Weighted mean"),
+  df %>%
+    summarise(
+      across(all_of(c(VAM)), ~weighted.sd(.x, w = DAD_NUMSTUDENTS, na.rm = T))
+    ) %>%
+    tidyr::pivot_longer(everything(), names_to = "VAM", values_to = "Weighted SD")
+) %>%
+  full_join(.,
+            df %>%
+              summarise(
+                across(all_of(c(VAM)), ~sum(!is.na(.x))) 
+              ) %>%
+              tidyr::pivot_longer(everything(), names_to = "VAM", values_to = "N Classrooms")
+  ) %>%
+  kable(caption = "Value-added scores", digits = 2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_footnote("Note. Weighted means and SDs are calculated using the class size. Mininum and maximum are based on classroom-level data. Weighted statistics reflect the distribution of each characteristic across all pupils in the sample.", notation = "none") %>% 
+  print()
+
+
+
+# create data frame
+tmp <- full_join(df %>%
+                   select(SECTION_ICPSR_ID, VA_MATH, VA_BAM) %>%
+                   tidyr::pivot_longer(!SECTION_ICPSR_ID, names_to = "Test", values_to = "Score")
+                 ,
+                 
+                 df %>%
+                   select(SECTION_ICPSR_ID, VA_MATH_adj, VA_BAM_adj) %>%
+                   tidyr::pivot_longer(!SECTION_ICPSR_ID, names_to = "Test", values_to = "Score_adj") %>%
+                   mutate(Test = gsub("_adj", "", Test))
+) %>%
+  full_join(., 
+            df %>%
+              select(SECTION_ICPSR_ID, VA_MATH_std, VA_BAM_std) %>%
+              tidyr::pivot_longer(!SECTION_ICPSR_ID, names_to = "Test", values_to = "Score_std") %>%
+              mutate(Test = gsub("_std", "", Test))) %>%
+  full_join(., 
+            df %>%
+              select(SECTION_ICPSR_ID, VA_MATH_adj_std, VA_BAM_adj_std) %>%
+              tidyr::pivot_longer(!SECTION_ICPSR_ID, names_to = "Test", values_to = "Score_adj_std") %>%
+              mutate(Test = gsub("_adj_std", "", Test))) %>%
+  mutate(
+    Test = gsub("VA_", "", Test),
+    Test = factor(Test, levels = c("MATH", "BAM"))) %>%
+  as.data.frame()
+
+# add information for colouring
+tints_vam <- col.tint(cols_vam, tint = .4)
+names(tints_vam) <- names(cols_vam)
+
+tmp$fill_col <- cols_vam[tmp$Test]
+tmp$tint_col <- tints_vam[tmp$Test]
+
+for (i in 1:length(cols_vam)) {
+  if (i == 1) {
+    lvl_vam <- c(tints_vam[i], cols_vam[i])
+  } else {
+    lvl_vam <- c(lvl_vam, tints_vam[i], cols_vam[i])
+  }
+}
+
+# create split violin plot
+cat("\n\n")
+cat("#### **Figure**\n")
+cat("#### *Distribution of raw and adjusted VAMs*\n")  
+tmp %>%
+  tidyr::pivot_longer(., cols = c(Score, Score_adj), names_to = "Type of score", values_to = "Score") %>%
+  mutate(
+    `Type of score` = factor(`Type of score`, levels = c("Score_adj", "Score")),
+    tint_col = if_else(`Type of score` == "Score", col.tint(fill_col, tint = 0.4), fill_col),
+    tint_col = factor(tint_col, levels = lvl_vam)
+  ) %>%
+  ggplot(aes(x = Test, y = Score)) +
+  geom_split_violin(aes(fill = tint_col), show.legend = F) +
+  stat_summary(fun = mean, geom = "crossbar", fatten = 1, width = .2, position = position_dodge(width = .2), show.legend = F) +
+  ambition_theme +
+  xlab("Raw vs. adjusted") + ylab("Score") +
+  facet_wrap(vars(Test), scales = "free_x") +
+  scale_fill_identity() +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  )
+
+# create scatter plot
+cat("\n\n")
+cat("#### **Figure**\n")
+cat("#### *Relationship between raw and adjusted VAMs*\n")  
+ggplot(data = tmp, aes(x = Score, y = Score_adj)) +
+  geom_point(alpha = 0) +
+  stat_cor(method = "pearson", r.accuracy = 0.001, p.accuracy = 0.001, cor.coef.name = "r", 
+           label.sep = "\n", label.x = -1, label.y = 0.875*1) +
+  geom_smooth(method = "lm", colour = black) +
+  geom_density2d(aes(color = Test)) +
+  geom_xsidehistogram(aes(fill = tint_col), binwidth = 0.25) +
+  geom_ysidehistogram(aes(fill = fill_col), binwidth = 0.25) +
+  ambition_theme +
+  xlab("Raw VAM") + ylab("Adjusted VAM") +
+  facet_wrap(vars(Test)) +
+  coord_cartesian(xlim = c(-1, 1), ylim = c(-1, 1)) +
+  scale_color_manual(values = cols_vam) +
+  scale_fill_identity() +
+  scale_y_continuous(breaks =  seq(-3, 3, .5)) +
+  scale_x_continuous(breaks =  seq(-3, 3, .5)) +
+  theme(
+    legend.position = "none",
+    ggside.axis.text = element_blank(),
+    ggside.axis.ticks = element_blank()
+  )
+
+
+# create histogram plot
+cat("\n\n")
+cat("#### **Figure**\n")
+cat("#### *Distribution of standardised adjusted VAMs*\n")  
+ggplot(data = tmp, aes(x = Score_adj_std))  +
+  geom_histogram(aes(fill = fill_col), binwidth = 0.5) +
+  ambition_theme +
+  xlab("Adjusted standardised VAM") + ylab("Count") +
+  facet_wrap(vars(Test), scales = "free_x") +
+  scale_fill_identity() +
+  scale_x_continuous(breaks = seq(-4, 4, 1), limits = c(-4, 4)) + 
+  theme(legend.position = "none")
+
+# create violin plot
+cat("\n\n")
+cat("#### **Figure**\n")
+cat("#### *Distribution of standardised VAMs before and after adjustment*\n")  
+tmp %>%
+  tidyr::pivot_longer(., cols = c(Score_std, Score_adj_std), names_to = "Type of score", values_to = "Score_std") %>%
+  mutate(
+    `Type of score` = factor(`Type of score`, levels = c("Score_adj_std", "Score_std")),
+    tint_col = if_else(`Type of score` == "Score_std", col.tint(fill_col, tint = 0.4), fill_col),
+    tint_col = factor(tint_col, levels = lvl_vam)
+  ) %>%
+  ggplot(aes(x = Test, y = Score_std)) +
+  geom_split_violin(aes(fill = tint_col), show.legend = F) +
+  stat_summary(fun = mean, geom = "crossbar", fatten = 1, width = .2, position = position_dodge(width = .2), show.legend = F) +
+  ambition_theme +
+  xlab("Std. vs. adj. std.") + ylab("Score") +
+  facet_wrap(vars(Test), scales = "free_x") +
+  scale_fill_identity() +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  )
+
+
+# create scatter plot
+cat("\n\n")
+cat("#### **Figure **\n")
+cat("#### *Relationship between VAMs (adj. std.) *\n", sep = "")  
+
+ggplot(data = df, aes(x = VA_MATH_adj_std, y = VA_BAM_adj_std)) +
+  geom_point(alpha = 0) +
+  stat_cor(method = "pearson", r.accuracy = 0.001, p.accuracy = 0.001, cor.coef.name = "r", 
+           label.x = -4, label.y = 0.875*4) +
+  geom_density2d(col = black) + 
+  geom_xsidehistogram(binwidth = 0.25, fill = blue) +
+  geom_ysidehistogram(binwidth = 0.25, fill = red) +
+  geom_smooth(method = "lm", formula = y ~ x, colour = black, fill = black, alpha = .2, fullrange = T) +
+  ambition_theme +
+  xlab("MATH") + ylab("BAM") +
+  # ggtitle(title) +
+  theme(legend.position = "none") +
+  coord_fixed() +
+  scale_x_continuous(breaks = seq(-4, 4, 1), limits = c(-4, 4)) +
+  scale_y_continuous(breaks = seq(-4, 4, 1), limits = c(-4, 4)) +
+  # coord_cartesian(xlim = c(-4, NA), ylim = c(-4, NA)) +
+  theme(
+    ggside.axis.text = element_blank(),
+    ggside.axis.ticks = element_blank()
+  )
+
+```
+
+```{r nca, eval = F, warning = F}
+
+for (v in 1:length(vam)) {
+  
+  measure = vam[v]
+  
+  cat("###", head[v], "\n\n")
+  
+  # define NCA model
+  invisible(capture.output(
+    model <- nca_analysis(data = df_nca, 
+                          x = conditions, 
+                          y = measure, 
+                          ceilings = ceilings,
+                          test.rep = 10000, # number of resamples in the statistical approximate permutation test
+                          steps = seq(-4, 4, .5),
+                          bottleneck.x = "actual",
+                          bottleneck.y = "actual"
+    )))
+  
+  n_ceil <- length(model$bottlenecks)
+  n_cond <- length(model$summaries)
+  
+  # run OLS
+  for (c in 1:length(conditions)) {
+    cond <- conditions[c]
+    # run OLS
+    m <- lm(get(measure) ~ get(cond), data = df_nca)
+    # extract coefs
+    coef <- as.data.frame(summary(m)$coefficients)
+    names(coef)[names(coef) == "Pr(>|t|)"] <- "p value"
+    coef$Domain <- cond
+    coef$Item <- gsub("_adj|_adj_std", "", gsub("FFT_", "", cond))
+    coef$Coefficient <- c("Intercept", "Beta")
+    # combine
+    if (c == 1) out <- coef else out <- rbind(out, coef)
+    
+    if (c > 1) {
+      # define range of X for which to predict y values
+      x_seq <- seq(xlim[1]-1, xlim[2]+1, length.out = 200)
+      tmp <- data.frame(values = x_seq)
+      names(tmp) <- cond
+      # predict y values
+      tmp <- as.data.frame(predict(m, newdata = tmp, interval = "confidence"))
+      names(tmp)[1] <- measure
+      tmp$Domain <- cond
+      tmp$Score <- x_seq
+      # combine
+      if (c == 2) df_pred <- tmp else df_pred <- rbind(df_pred, tmp)
+    }
+  }
+  
+  # multiple regression
+  m <- lm(df_nca[, measure] ~ df_nca[, conditions[2]] + df_nca[, conditions[3]] + df_nca[, conditions[4]] + df_nca[, conditions[5]])
+  coef <- as.data.frame(summary(m)$coefficients)
+  names(coef)[names(coef) == "Pr(>|t|)"] <- "p value"
+  coef$Domain <- "All"
+  # coef$coef <- c("Intercept", paste("Beta", conditions[2]), paste("Beta", conditions[3]), paste("Beta", conditions[4]), paste("Beta", conditions[5]))
+  coef$Coefficient <- c("Intercept", rep("Beta", length(conditions[-1])))
+  # coef$Item <- gsub("Beta |Intercept", "", gsub("FFT_", "", coef$coef))
+  coef$Item <- gsub("_adj|_adj_std", "", gsub("FFT_", "", c("", conditions[-1])))
+  
+  # combine OLS and multiple regression
+  out <- bind_rows(out, coef) %>%
+    relocate(Domain, Coefficient, Item)
+  
+  # print OLS results to markdown
+  out %>%
+    kable(caption = "OLS coefficients", row.names = F, digits = 3) %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+    add_footnote(paste0("Note. Data from ", nrow(df_nca), " classrooms is included."), notation = "none") %>% 
+    print()
+  
+  nca_param <- rbind(
+    # combine model summary
+    cbind(
+      model$summaries[[1]]$global[, 1],
+      model$summaries[[2]]$global[, 1],
+      model$summaries[[3]]$global[, 1],
+      model$summaries[[4]]$global[, 1],
+      model$summaries[[5]]$global[, 1]
+    ) %>% 
+      as.data.frame() %>% 
+      filter(!grepl("min|max", row.names(.)))
+    ,
+    # combine NCA parameters
+    cbind(
+      model$summaries[[1]]$params[, 1:n_ceil],
+      model$summaries[[2]]$params[, 1:n_ceil],
+      model$summaries[[3]]$params[, 1:n_ceil],
+      model$summaries[[4]]$params[, 1:n_ceil],
+      model$summaries[[5]]$params[, 1:n_ceil]
+    ) %>% 
+      as.data.frame() 
+  )
+  # SDC: remove “# Above” rows of the NCA parameter tables, as some of those observation counts are less than 3
+  nca_param <- nca_param[row.names(nca_param) != "# above", ]
+  
+  # print NCA parameters
+  nca_param %>%
+    kable(caption = "NCA parameters", digits = 3, col.names = rep(ceilings[-length(ceilings)], length(conditions))) %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>% 
+    # add_header_above(header = c(" " = 1, "FFT_CEV_adj" = n_ceil, "FFT_MSB_adj" = n_ceil, "FFT_MCP_adj" = n_ceil, "FFT_CERR_adj" = n_ceil, "FFT_ECL_adj" = n_ceil), border_left = T, border_right = T) %>%
+    add_header_above(setNames(c(1, rep(n_ceil, n_cond)), c("Parameter", conditions))) %>%
+    add_footnote(c(paste0("Note. Data from ", nrow(df_nca), " classrooms is included."),
+                   paste0("This table was saved as ", file_name_stem, measure, ".csv")), notation = "none") %>% 
+    print()
+  
+  # export
+  nca_param2 <- nca_param
+  names(nca_param2) <- conditions
+  nca_param2[, 1] <- round(as.numeric(c(nca_param2[, 1])),3)
+  nca_param2[, 2] <- round(as.numeric(c(nca_param2[, 2])),3)
+  nca_param2[, 3] <- round(as.numeric(c(nca_param2[, 3])),3)
+  nca_param2[, 4] <- round(as.numeric(c(nca_param2[, 4])),3)
+  nca_param2[, 5] <- round(as.numeric(c(nca_param2[, 5])),3)
+  
+  write.csv(nca_param2, file = paste0(file_name_stem, measure, ".csv"))
+  
+  # show plot for domain
+  if (grepl("BAM", measure)) col_vam <- red else col_vam <- blue
+  if (grepl("_adj_std", measure)) ylab <- "VAM (adj. std.)" else ylab <- "VAM (std.)"
+  if (grepl("_adj_std", conditions[1])) xlab <- "Observation score (adj. std.)" else xlab <- "Observation score (adj.)"
+  # plot_nca(model = model, index = 1, xlim = c(1, 4), ylim = c(model$summaries[[1]]$global["Ymin", 1], model$summaries[[1]]$global["Ymax", 1]))
+  plot_nca(model = model, index = 1, xlim = xlim, ylim = ylim, xbreaks = xbreaks, ybreaks = ybreaks, xbin = xbin, ybin = ybin, col_obs = cols_obs[1], col_vam = col_vam, ylab = ylab, xlab = xlab)
+  
+  # create faceted plot for each indicator #
+  
+  # combine data for density plot
+  df_nca_long <- df_nca %>%
+    select(all_of(c(measure, conditions))) %>%
+    tidyr::pivot_longer(cols = conditions, names_to = "Domain", values_to = "Score") %>%
+    mutate(
+      Domain = factor(Domain, levels = conditions),
+      fill_col = cols_obs[Domain]
+    ) %>%
+    filter(Domain != conditions[1]) %>%
+    mutate(Item = gsub("_adj|_adj_std", "", Domain)) %>%
+    left_join(., instrument %>% 
+                select(-Domain))  %>%
+    mutate(
+      Description = stringr::str_to_sentence(Description),
+      Item = gsub("FFT_", "", Item),
+      Item = factor(Item, levels = gsub("FFT_", "", gsub("_adj|_adj_std", "", conditions[-1])))
+    ) %>%
+    as.data.frame()
+  
+  
+  df_abline <- 
+    # save CR intercepts and slopes
+    data.frame(
+      Domain = conditions[-1],
+      cr_intercept = unlist(t(nca_param[grepl("Intercept", row.names(nca_param)), -1])),
+      cr_slope = unlist(t(nca_param[grepl("Slope", row.names(nca_param)), -1]))
+    ) %>%
+    # combine with OLS intercepts
+    left_join(., out %>% 
+                filter(Coefficient == "Intercept") %>%
+                select(Domain, Estimate) %>%
+                rename(ols_intercept = Estimate)
+    ) %>%
+    # combine with OLS slopes
+    left_join(., out %>% 
+                filter(Coefficient == "Beta") %>%
+                select(Domain, Estimate) %>%
+                rename(ols_slope = Estimate)
+    ) %>%
+    mutate(
+      Domain = factor(Domain, levels = conditions[-1]),
+      Item = gsub("FFT_", "", gsub("_adj|_adj_std", "", Domain)),
+      Item = factor(Item, levels = gsub("FFT_", "", gsub("_adj|_adj_std", "", conditions[-1])))
+    )
+  
+  # create scatter plot
+  cat("\n\n")
+  cat("#### **Figure**\n")
+  cat("#### *NCA Plot: FFT indicators -", measure, "*\n")  
+  
+  p <- ggplot(data = df_nca_long, aes(x = Score, y = get(measure))) +
+    geom_point(col = navy, alpha = 0) + geom_density2d(color = black) +
+    # geom_smooth(method = "lm", se = T, fullrange = T) +
+    # stat_cor(method = "pearson", r.accuracy = 0.001, p.accuracy = 0.001, cor.coef.name = "r", 
+    #          label.x = xlim[1], label.y = 0.875*ylim[2], label.sep = "\n") +
+    geom_ribbon(data = df_pred %>% mutate(Domain = factor(Domain, levels = conditions[-1])), 
+                aes(ymin = lwr, ymax = upr), fill = black, alpha = .2) +
+    geom_abline(data = df_abline, aes(slope = ols_slope, intercept = ols_intercept),
+                color = black, linewidth = 1, linetype = "solid") +
+    geom_abline(data = df_abline, aes(slope = cr_slope, intercept = cr_intercept),
+                color = navy, linewidth = 1, linetype = "longdash") +
+    geom_xsidehistogram(aes(fill = fill_col), binwidth = xbin) +
+    geom_ysidehistogram(fill = col_vam, binwidth = ybin) +
+    facet_wrap(vars(Item), nrow = 2) +
+    ambition_theme +
+    coord_cartesian(xlim = xlim, ylim = ylim) +
+    scale_y_continuous(breaks = seq(floor(ylim[1]), ceiling(ylim[2]), ybreaks*2)) +
+    scale_x_continuous(breaks = seq(floor(xlim[1]), ceiling(xlim[2]), xbreaks*2)) +
+    scale_fill_identity() +
+    ylab(paste0(ylab)) + xlab(paste0(xlab)) +
+    theme(
+      axis.text = element_text(size = 10),
+      ggside.axis.text = element_blank(),
+      ggside.axis.ticks = element_blank()
+    )
+  print(p)
+  
+  
+  
+  # bottleneck tables - actual values #
+  
+  # define NCA model
+  invisible(capture.output(
+    model <- nca_analysis(data = df_nca, 
+                          x = conditions, 
+                          y = measure, 
+                          ceilings = ceilings,
+                          steps = seq(-4, 4, .5),
+                          bottleneck.x = "actual",
+                          bottleneck.y = "actual"
+    )))
+  
+  # extract bottleneck table
+  tmp_act <- model$bottlenecks[[1]]
+  # tmp_act <- merge(model$bottlenecks[[1]], model$bottlenecks[[2]], by = measure)
+  # tmp <- merge(tmp, model$bottlenecks[[3]], by = measure)
+  # tmp <- merge(tmp, model$bottlenecks[[4]], by = measure)
+  
+  tmp_act %>% 
+    kable(caption = "Bottlenecks (expressed as actual values)", digits = 3, col.names = c(paste(measure), rep(conditions, n_ceil))) %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+    add_header_above(header = c(" " = 1, "cr_fdh" = n_cond)) %>%
+    add_footnote(paste0("Note. Data from ", nrow(df_nca), " classrooms is included. NN = Not necessary."), notation = "none") %>% 
+    print()
+  
+  # bottleneck tables - percentage range #
+  
+  # define NCA model
+  invisible(capture.output(
+    model <- nca_analysis(data = df_nca, 
+                          x = conditions, 
+                          y = measure, 
+                          ceilings = ceilings,
+                          steps = seq(-4, 4, .5),
+                          bottleneck.x = "percentage.range",
+                          bottleneck.y = "actual"
+    )))
+  
+  # extract bottleneck table
+  tmp_range <- model$bottlenecks[[1]]
+  # tmp_range <- merge(model$bottlenecks[[1]], model$bottlenecks[[2]], by = measure)
+  # tmp <- merge(tmp, model$bottlenecks[[3]], by = measure)
+  # tmp <- merge(tmp, model$bottlenecks[[4]], by = measure)
+  
+  tmp_range %>% 
+    kable(caption = "Bottlenecks (expressed as percentage range)", digits = 3, col.names = c(paste(measure), rep(conditions, n_ceil))) %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+    add_header_above(header = c(" " = 1, "cr_fdh" = n_cond)) %>%
+    add_footnote(paste0("Note. Data from ", nrow(df_nca), " classrooms is included. NN = Not necessary."), notation = "none") %>% 
+    print()
+  
+  
+  # bottleneck tables - percentiles #
+  
+  # define NCA model
+  invisible(capture.output(
+    model <- nca_analysis(data = df_nca, 
+                          x = conditions, 
+                          y = measure, 
+                          ceilings = ceilings,
+                          steps = seq(-4, 4, .5),
+                          bottleneck.x = "percentile",
+                          bottleneck.y = "actual"
+    )))
+  
+  # extract bottleneck table
+  tmp_perc <- model$bottlenecks[[1]]
+  # tmp_perc <- merge(model$bottlenecks[[1]], model$bottlenecks[[2]], by = measure)
+  # tmp <- merge(tmp, model$bottlenecks[[3]], by = measure)
+  # tmp <- merge(tmp, model$bottlenecks[[4]], by = measure)
+  
+  tmp_perc %>% 
+    kable(caption = "Bottlenecks (expressed as percentiles)", digits = 3, col.names = c(paste(measure), rep(conditions, n_ceil))) %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+    add_header_above(header = c(" " = 1, "cr_fdh" = n_cond)) %>%
+    add_footnote(paste0("Note. Data from ", nrow(df_nca), " classrooms is included. NN = Not necessary."), notation = "none") %>% 
+    print()
+  
+}
+
+```
+
+```{r combined, eval = F, warning = F}
+# initialise empty lists
+list_ols <- list()
+list_bottleneck <- list()
+
+# initialise empty vector
+ols_intercept <- c()
+ols_slope <- c()
+nca_intercept <- c()
+nca_slope <- c()
+
+vam <- VAM[grepl("_adj_std", VAM)]
+
+for (v in 1:length(vam)) {
+  
+  measure = vam[v]
+  
+  # MODEL 1 #
+  
+  # OLS for FFT adj.
+  conditions <- paste0(score2[1:5], "_adj")
+  # run OLS
+  for (c in 1:length(conditions)) {
+    cond <- conditions[c]
+    # run OLS
+    m <- lm(get(measure) ~ get(cond), data = df_nca)
+    if(c == 1){
+      # extract intercept and slope
+      ols_intercept <- c(ols_intercept, m$coefficients[["(Intercept)"]])
+      ols_slope <- c(ols_slope, m$coefficients[["get(cond)"]])
+      # define range of X for which to predict y values
+      x_seq <- seq(xlim[1]-1, xlim[2]+1, length.out = 200)
+      tmp <- data.frame(values = x_seq)
+      names(tmp) <- cond
+      # predict y values
+      tmp <- as.data.frame(predict(m, newdata = tmp, interval = "confidence"))
+      names(tmp)[1] <- "Score"
+      tmp$Test <- gsub("_adj_std", "", gsub("VA_", "", measure))
+      tmp[, cond] <- x_seq
+      # combine
+      if (v == 1) df_pred <- tmp else df_pred <- rbind(df_pred, tmp)
+    }
+    # extract coefs
+    coef <- as.data.frame(summary(m)$coefficients)
+    names(coef)[names(coef) == "Pr(>|t|)"] <- "p value"
+    coef$Item <- gsub("_adj|_adj_std", "", gsub("FFT_", "", cond))
+    coef$Coefficient <- c("Intercept", "Beta")
+    # combine
+    if (c == 1) adj <- coef else adj <- rbind(adj, coef)
+  }
+  
+  # OLS for FFT adj. std.
+  conditions <- paste0(score2[1:5], "_adj_std")
+  # run OLS
+  for (c in 1:length(conditions)) {
+    cond <- conditions[c]
+    # run OLS
+    m <- lm(get(measure) ~ get(cond), data = df_nca)
+    # extract coefs
+    coef <- as.data.frame(summary(m)$coefficients)
+    names(coef)[names(coef) == "Pr(>|t|)"] <- "p value"
+    coef$Item <- gsub("_adj|_adj_std", "", gsub("FFT_", "", cond))
+    coef$Coefficient <- c("Intercept", "Beta")
+    # combine
+    if (c == 1) adj_std <- coef else adj_std <- rbind(adj_std, coef)
+  }
+  
+  # combine
+  m1 <- left_join(adj %>% 
+                    filter(Coefficient == "Beta") %>%
+                    select(-Coefficient), 
+                  adj_std %>% 
+                    filter(Coefficient == "Beta") %>%
+                    rename(Estimate_std = Estimate) %>%
+                    select(c(Item, Estimate_std)), 
+                  join_by(Item)
+  ) %>%
+    relocate(Item, Estimate, `Std. Error`, Estimate_std) %>%
+    mutate(
+      across(c(Estimate, `Std. Error`, Estimate_std), ~round(.x, 2)),
+      across(c(`t value`, `p value`), ~round(.x, 3))
+    )
+  
+  # MODEL 2 #
+  
+  # multiple regression for FFT adj.
+  conditions <- paste0(score2[1:5], "_adj")
+  m <- lm(df_nca[, measure] ~ df_nca[, conditions[2]] + df_nca[, conditions[3]] + df_nca[, conditions[4]] + df_nca[, conditions[5]])
+  adj <- as.data.frame(summary(m)$coefficients)
+  names(adj)[names(adj) == "Pr(>|t|)"] <- "p value"
+  adj$Item <- gsub("_adj|_adj_std", "", gsub("FFT_", "", c("", conditions[-1])))
+  
+  # multiple regression for FFT adj.
+  conditions <- paste0(score2[1:5], "_adj_std")
+  m <- lm(df_nca[, measure] ~ df_nca[, conditions[2]] + df_nca[, conditions[3]] + df_nca[, conditions[4]] + df_nca[, conditions[5]])
+  adj_std <- as.data.frame(summary(m)$coefficients)
+  names(adj_std)[names(adj_std) == "Pr(>|t|)"] <- "p value"
+  adj_std$Item <- gsub("_adj|_adj_std", "", gsub("FFT_", "", c("", conditions[-1])))
+  
+  # combine
+  m2 <- left_join(adj, 
+                  adj_std %>% 
+                    rename(Estimate_std = Estimate) %>%
+                    select(c(Item, Estimate_std)), 
+                  join_by(Item)
+  ) %>%
+    relocate(Item, Estimate, `Std. Error`, Estimate_std) %>%
+    mutate(
+      across(c(Estimate, `Std. Error`, Estimate_std), ~round(.x, 2)),
+      across(c(`t value`, `p value`), ~round(.x, 3))
+    )
+  
+  
+  # COMBINE MODELS
+  ols <- left_join(m1, m2, join_by(Item))
+  # names(ols) <- gsub(".x|.y", "", names(ols))
+  
+  # store data in list
+  list_ols[[measure]] <- ols
+  
+  # bottleneck tables - actual values #
+  
+  conditions <- paste0(score2[1:5], "_adj")
+  
+  # define NCA model
+  invisible(capture.output(
+    model <- nca_analysis(data = df_nca, 
+                          x = conditions, 
+                          y = measure, 
+                          ceilings = ceilings,
+                          steps = seq(-4, 4, .5),
+                          bottleneck.x = "actual",
+                          bottleneck.y = "actual"
+    )))
+  
+  nca_intercept <- c(nca_intercept, model$Intercept[[1]][[1]])
+  nca_slope <- c(nca_slope, model$Slope[[1]][[1]])
+  
+  # extract bottleneck table
+  tmp_act <- as.data.frame(model$bottlenecks[[1]][, 1:2])
+  tmp_act[, 2] <- c(model$bottlenecks[[1]][, 2])
+  names(tmp_act)[2] <- paste0(conditions[1], "_act")
+  
+  # bottleneck tables - standardised values #
+  
+  conditions <- paste0(score2[1:5], "_adj_std")
+  
+  # define NCA model
+  invisible(capture.output(
+    model <- nca_analysis(data = df_nca, 
+                          x = conditions, 
+                          y = measure, 
+                          ceilings = ceilings,
+                          steps = seq(-4, 4, .5),
+                          bottleneck.x = "actual",
+                          bottleneck.y = "actual"
+    )))
+  
+  # extract bottleneck table
+  tmp_std <- as.data.frame(model$bottlenecks[[1]][, 1:2])
+  tmp_std[, 2] <- c(model$bottlenecks[[1]][, 2])
+  names(tmp_std)[2] <- paste0(conditions[1], "_act")
+  
+  # bottleneck tables - percentage range #
+  
+  conditions <- paste0(score2[1:5], "_adj")
+  
+  # define NCA model
+  invisible(capture.output(
+    model <- nca_analysis(data = df_nca, 
+                          x = conditions, 
+                          y = measure, 
+                          ceilings = ceilings,
+                          steps = seq(-4, 4, .5),
+                          bottleneck.x = "percentage.range",
+                          bottleneck.y = "actual"
+    )))
+  
+  # extract bottleneck table
+  tmp_range <- as.data.frame(model$bottlenecks[[1]][, 1:2])
+  tmp_range[, 2] <- c(model$bottlenecks[[1]][, 2])
+  names(tmp_range)[2] <- paste0(conditions[1], "_range")
+  
+  # bottleneck tables - percentiles #
+  
+  # define NCA model
+  invisible(capture.output(
+    model <- nca_analysis(data = df_nca, 
+                          x = conditions, 
+                          y = measure, 
+                          ceilings = ceilings,
+                          steps = seq(-4, 4, .5),
+                          bottleneck.x = "percentile",
+                          bottleneck.y = "actual"
+    )))
+  
+  # extract bottleneck table
+  tmp_perc <- as.data.frame(model$bottlenecks[[1]][, 1:2])
+  tmp_perc[, 2] <- c(model$bottlenecks[[1]][, 2])
+  names(tmp_perc)[2] <- paste0(conditions[1], "_perc")
+  
+  # combine bottlenecks for export #
+  tmp <- tmp_act %>%
+    left_join(tmp_std) %>%
+    left_join(tmp_range) %>%
+    left_join(tmp_perc)
+  
+  # store data in list
+  list_bottleneck[[measure]] <- tmp
+  
+}
+
+# OLS table #
+
+tmp <- list_ols[[vam[1]]][1, ]
+tmp[, 1:ncol(tmp)] <- NA
+
+# combine both outcomes
+ols <- tmp %>% 
+  bind_rows(., tmp %>% mutate(Item = vam[1])) %>%
+  bind_rows(., list_ols[[vam[1]]]) %>%
+  bind_rows(., tmp %>% mutate(Item = vam[2])) %>%
+  bind_rows(., list_ols[[vam[2]]]) %>%
+  mutate(across(c(`p value.x`, `p value.y`), ~if_else(. < 0.001, "<0.001", sprintf("%.3f", .x))))
+
+# export
+names(ols) <- c("Observation score", rep(c("B", "SE", "β", "t", "p"), 2))
+write.csv(ols, "coef_ols.csv", row.names = F)
+
+# print to markdown
+idx <- which(is.na(ols$B))
+
+ols %>%
+  kable(caption = "OLS coefficients") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_header_above(header = c(" " = 1, "Model 1" = 5, "Model 2" = 5)) %>%
+  row_spec(idx, bold = T) %>%
+  add_footnote(c(paste0("Note. Data from ", nrow(df_nca), " classrooms is included. In model 1, each predictor was entered seperately. In model 2, all predictors were entered together."),
+                 "This table was saved as coef_ols.csv"), notation = "none") %>%
+  print()
+
+# bottleneck table #
+
+tmp <- list_bottleneck[[vam[1]]][1, ]
+tmp[, 1:ncol(tmp)] <- NA
+
+# combine both outcomes
+bottleneck <- full_join(list_bottleneck[[vam[1]]] %>%
+                          rename(outcome = paste(vam[1])), 
+                        list_bottleneck[[vam[2]]]  %>%
+                          rename(outcome = paste(vam[2])),
+                        join_by(outcome))
+
+# export
+names(bottleneck) <- c("VAM (adj. std.)", rep(c("Adj.", "Adj. std.", "% range", "Percentile"), 2))
+write.csv(bottleneck, "coef_bottlenecks.csv", row.names = F)
+
+# print to markdown
+idx <- which(is.na(ols$B))
+
+bottleneck %>%
+  kable(caption = "NCA bottlenecks") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_header_above(header = c(" " = 1, "MATH" = 4, "BAM" = 4)) %>%
+  add_footnote(c(paste0("Note. Data from ", nrow(df_nca), " classrooms is included. Bottlenecks are shown for CEV where the values are shown as adjusted values, adjusted standardised values, percentage range or percentiles. NCA ceiling line = CR-FDH. NN = not necessary."),
+                 "This table was saved as coef_bottlenecks.csv"), notation = "none") %>%
+  print()
+
+
+
+# create faceted plot for each outcome #
+
+cond = "FFT_CEV_adj"
+
+# combine data for density plot
+df_nca_long <- df_nca %>%
+  select(all_of(c(vam, cond))) %>%
+  tidyr::pivot_longer(cols = vam, names_to = "Test", values_to = "Score") %>%
+  mutate(
+    Test = gsub("_adj_std", "", gsub("VA_", "", Test)),
+    Test = factor(Test, levels = c("MATH", "BAM")),
+    fill_col = cols_vam[Test]
+  ) %>%
+  as.data.frame()
+
+df_abline <- 
+  # save CR intercepts and slopes
+  data.frame(
+    Test = vam,
+    cr_intercept = nca_intercept,
+    cr_slope = nca_slope
+  ) %>%
+  # combine with OLS intercepts and slopes
+  left_join(., data.frame(
+    Test = vam,
+    ols_intercept = ols_intercept,
+    ols_slope = ols_slope)
+  ) %>%
+  mutate(
+    Test = gsub("_adj_std", "", gsub("VA_", "", Test)),
+    Test = factor(Test, levels = c("MATH", "BAM"))
+  )
+
+# create scatter plot
+cat("\n\n")
+cat("#### **Figure**\n")
+cat("#### *NCA Plot: VAMs -", cond, "*\n")  
+
+p <- ggplot(data = df_nca_long, aes(x = get(cond), y = Score)) +
+  geom_point(col = navy, alpha = 0) + geom_density2d(color = black) +
+  # geom_smooth(method = "lm", se = T, fullrange = T) +
+  # stat_cor(method = "pearson", r.accuracy = 0.001, p.accuracy = 0.001, cor.coef.name = "r", 
+  #          label.x = xlim[1], label.y = 0.875*ylim[2], label.sep = "\n") +
+  geom_ribbon(data = df_pred %>% mutate(Test = factor(Test, levels = c("MATH", "BAM"))), 
+              aes(ymin = lwr, ymax = upr), fill = black, alpha = .2) +
+  geom_abline(data = df_abline, aes(slope = ols_slope, intercept = ols_intercept),
+              color = black, linewidth = 1, linetype = "solid") +
+  geom_abline(data = df_abline, aes(slope = cr_slope, intercept = cr_intercept),
+              color = navy, linewidth = 1, linetype = "longdash") +
+  geom_xsidehistogram(fill = cols_obs[gsub("_adj", "", cond)], binwidth = xbin) +
+  geom_ysidehistogram(aes(fill = fill_col), binwidth = ybin) +
+  facet_wrap(vars(Test), nrow = 1) +
+  ambition_theme +
+  coord_cartesian(xlim = xlim, ylim = ylim) +
+  scale_y_continuous(breaks = seq(floor(ylim[1]), ceiling(ylim[2]), ybreaks*2)) +
+  scale_x_continuous(breaks = seq(floor(xlim[1]), ceiling(xlim[2]), xbreaks*2)) +
+  scale_fill_identity() +
+  ylab(paste0(ylab)) + xlab(paste0(xlab)) +
+  theme(
+    axis.text = element_text(size = 10),
+    ggside.axis.text = element_blank(),
+    ggside.axis.ticks = element_blank()
+  )
+print(p)
+
+
+
+```
+
+
+# Conditions: Framework for Teaching (FFT)  
+
+FFT is an observational protocol designed to measure components of instruction that reflect a constructivist view of teaching. The instrument was used in the MET Study to code instruction in all English and math classrooms at grades 4-9 using the domains "Classroom Environment" and "Instruction". Each of these domains, in turn, is measured by a number of indicators.  
+
+- The domain *Classroom Environment* is measured along four indicators: creating an environment of respect and rapport; establishing a culture for learning; managing classroom procedures; and managing student behaviour.  
+- The domain *Instruction* also is measured along four indicators: communicating with students; using questioning and discussion techniques, engaging students in learning, and using assessment in instruction.  
+
+```{r, results='asis', message=F}
+<<fft>>
+```
+
+
+FFT scoring is done using a detailed scoring rubric. However, unlike the other observation protocols used in the MET Study, raters use this rubric only once for each video, that is, a video scored with the FFT protocol will have only 1 score per video on each of the dimensions just described. In the MET Study, raters did not watch an entire video, however. Instead, raters watched for 15 minutes at the beginning of the video and then ten additional minutes at the 25-35 minute mark. They then scored the video as a single segment. Each indicator of the FFT protocol was scored on a 4-point scale ranging from unsatisfactory, to basic, to proficient, to distinguished, and for each indicator, a detailed scoring rubric described the kind of evidence appropriate for assigning a particular score. 
+
+For each observer score $o$ at classroom section $k$ taught by teacher $j$ at time $t$, we estimated its reliability $\text{Reliability}_{ojkt}$ using the following formula: 
+
+$$ 
+\text{Reliability}_{ojkt} = \frac{\text{% teacher}}{\text{% teacher} + \frac{\text{% section}}{\text{# of sections}_{ojkt}} + \frac{\text{% lessons}}{\text{# of lessons}_{ojkt}} + \frac{\text{% raters}}{\text{# of raters}_{ojkt}} + \frac{\text{% residual}}{\text{total # of scores per teacher}_{ojkt}}} 
+$$
+
+Percentages ($\text{%}$) were based on the variance decomposition reported in Gates Foundation (2012) whereas counts ($\text{#}$) were derived based on the number of segments averaged.  
+
+The reliability coefficients $\text{Reliability}_{ojkt}$ were then used to adjust observer score $o$ at classroom section $k$ taught by teacher $j$ at time $t$ towards the mean based on the reliability of each score using the following formula for reliability-based shrinkage:  
+
+$$ 
+\text{Score}_{adj, ojkt} = \overline{\text{Score}}_{ot} + \text{Reliability}_{ojkt} * (\overline{\text{Score}}_{ot} - \text{Score}_{ojkt}) 
+$$
+
+
+
+To better understand the results, we also standardised the adjusted observation scores.  
+$$ 
+\text{Score}_{adj, std, ojkt} = \frac{\text{Score}_{adj, ojkt} - \overline{\text{Score}}_{adj, ot}}{SD_{adj, ot}}
+$$
+
+# Outcomes: Value-added measures  
+
+At grades 4-8, pupil learning was measured by state mathematics assessments as well as the Balanced Assessment in Mathematics (BAM) administered directly by MET researchers. BAM is an open ended assessment that seeks to measure pupils’ capacities in the following areas: modelling/formulating problems; transforming/manipulating mathematical formalisms; inferring/drawing conclusions; and communicating about mathematics. Each assessment form contains four to five assessment tasks and requires 50-60 minutes to complete. Concerns about generalisability led the MET researchers to administer three different forms of the BAM (from the relevant grade levels tests for 2003, 2004 and 2005) in each classroom. Thus, all pupils in a classroom (or class section) did not take the same test.  
+
+MET researchers used pupil test scores to construct "value-added" measures of teaching effectiveness for individual teachers. The teachers provided information to indicate the percentage of instructional responsibility for all pupils in a MET classroom each time pupil data was collected. This information was connected with the pupil achievement data to estimate value-added measures of teaching effectiveness based on a single outcome (e.g., the state Mathematics test, or the BAM). MET researchers estimated value-added models for each outcome separately by grade and district, so that all value-added estimates are not just test-specific, but also grade and district specific. 
+
+$$ 
+Y_{sit} = X_{it}\beta + \overline{X}_{jkt}\gamma + \theta Z_{si(t-1)} + \lambda \overline{Z}_{sjk(t-1)} + \epsilon_{sit} 
+$$
+
+where:  
+- $Y_{sit}$ is one of the achievement outcomes for pupil $i$ on test $s$ in the current school year $t$ (rank-based z-scores)  
+- $X_{it}$ is a vector of pupil background variables for pupil $i$ at time $t$  
+- $\overline{X}_{jkt}$ is a vector of the same pupil background variables, aggregated at section $k$ taught by teacher $j$ in which the pupil $i$ was enrolled at time $t$  
+- $Z_{si(t-1)}$ is pupil $i$’s prior test score (in the same subject as test $s$) at year $t-1$  
+- $\overline{Z}_{sjk(t-1)}$ is the prior test score (in the same subject as test $s$) at year $t-1$, aggregated at section $k$ taught by teacher $j$ in which the pupil $i$ was enrolled  
+- $\epsilon_{sit}$ is a residual for pupil $i$ on test $s$ in year $t$  
+
+There is also another set of value-added measures available that does not control for classroom-level aggregates:  
+
+$$ Y_{sit} = X_{it}\beta + \theta Z_{si(t-1)} + \epsilon_{sit}$$
+
+The residuals $\epsilon_{sit}$ were used as the basis for constructing value-added scores. The value-added score averages residuals  for test $s$ for the section $k$ taught by teacher $j$ in which the pupil $i$ was enrolled at time $t$.  Standard errors (SEs) for each teacher’s VAM are calculated as the SD of the residuals for a class section $k$ divided by the square root of the number of pupils residuals included in the classroom average.  
+
+$$ 
+\text{VAM}_{sjkt} =  \bar{\epsilon}_{sjkt} = \frac{1}{n} \sum_{i = 1}^{n}  \epsilon_{sit}
+$$
+
+$$
+\text{SE}_{sjkt} = \frac{\text{SD}_{sjkt}}{\sqrt{n}} = \frac{\sqrt{\frac{1}{n-1} \sum_{i=1}^{n} (\epsilon_{sit} - \bar{\epsilon}_{sjkt}} )^2 }{\sqrt{n}}
+$$
+
+For each $\text{VAM}_{sjkt}$, we estimated its reliability $\text{Reliability}_{sjkt}$ using the pooled variance $S^2_{pooled, st}$ of all $\text{VAM}_{sjkt}$ and the error variance $\text{S}_{error, sjkt}^2$ of each $\text{VAM}_{sjkt}$: 
+
+$$ 
+\text{Reliability}_{sjkt} = \frac{ S^2_{pooled, st} }{S^2_{pooled, st} + \text{S}_{error, sjkt}^2}
+$$
+The $S^2_{pooled, st}$ was computed as the variance across all classroom-level $\text{VAM}_{sjkt}$ for test $s$ at time $t$. The $\text{S}_{error,  sjkt}^2$ was computed by squaring the $\text{SE}_{sjkt}$ reported for each $\text{VAM}_{sjkt}$.   
+
+$$
+S^2_{pooled, st} = \frac{1}{m-1} \sum_{k=1}^{m} (\text{VAM}_{sjkt} - \overline{\text{VAM}}_{st})^2 
+$$
+where $\overline{\text{VAM}}_{st} = \frac{1}{m} \sum_{k=1}^{m}  \text{VAM}_{sjkt}$.
+
+$$
+\text{S}_{error, sjkt}^2 = \text{SE}_{sjkt}^2
+$$
+
+
+
+
+The reliability coefficients $\text{Reliability}_{sjkt}$ were then used to adjust the  $\text{VAM}_{sjkt}$ towards the mean using the following formula for reliability-based shrinkage:  
+
+$$ 
+\text{VAM}_{adj, sjkt} = \overline{\text{VAM}}_{st} + \text{Reliability}_{sjkt} * (\overline{\text{VAM}}_{st} - \text{VAM}_{sjkt})
+$$
+
+To facilitate comparability, we standardised unadjusted and adjusted VAMs $\text{VAM}_{sjkt}$ and $\text{VAM}_{adj, sjkt}$ by subtracting the their means and dividing by their SD.  
+
+$$ 
+\text{VAM}_{std, sjkt} = \frac{\text{VAM}_{sjkt} - \overline{\text{VAM}}_{st}}{SD_{st}}
+$$
+$$ 
+\text{VAM}_{adj, std, sjkt} = \frac{\text{VAM}_{adj, sjkt} - \overline{\text{VAM}}_{adj, st}}{SD_{adj, st}}
+$$
+
+# Necessary Condition Analysis (NCA)  
+
+Necessary Condition Analysis (NCA: Dul, 2016) is a method to identify conditions that must be present for a particular outcome to occur, but alone may not be sufficient to guarantee that outcome. The focus is the determine whether the absence of a condition prevents the desired outcome, highlighting constraints rather than drivers of success.   
+
+In traditional methods (e.g., multiple linear regression), it is assumed that each predictor additively influences the outcome. If one predictor is zero, the value of the outcome will be reduced unless the values of other predictors can compensate. In NCA, in comparison, the absence of a necessary condition results in outcome failure, independently of the value of the other predictors. Hence, in NCA, the aim is to search for empty areas in scatter plots between outcome and NCA predictor to draw a "ceiling line" to separate full and empty areas in the data. The presence of an empty zone is an indication of a necessary condition. This ceiling line marks the maximum possible value of the outcome for each value of the predictor to identify boundaries beyond which the outcome cannot go. In other words, a certain desired level of the outcome $Y = Y_C$ can only be achieved if $X \ge X_C$. This clearly differs from the concept of a regression line that shows the average relationship between two variables, typically by minimising the distance between the line and all data points.  
+
+Scatter plots are the starting point for NCA where the potential necessary condition is plotted on the x axis against the outcome on the y axis. Then a ceiling line is drawn to separate the 'empty' (or ceiling) zone in the left corner from the 'full' zone. The aim is to make the ceiling zone as large as possible without allowing any observations in the ceiling zone above the ceiling line. However, this requires a trade-off between the size of the ceiling zone and the number of observations in the ceiling zone (referred to as outliers or exceptions).  
+
+There are two classes of techniques to draw ceiling lines:  
+
+- Ceiling envelopment (CE)  
+- Ceiling regression (CR)  
+
+**Ceiling envelopment (CE)** is a non-parametric technique. A piecewise linear or stepwise ceiling line is drawn by connecting the highest observed values of the outcome for each value of the potential necessary condition. The resulting line 'envelops' the data from above, showing the empirical limit of the outcome value for each value of the necessary condition. There are hence no observations above the ceiling line. The *CE Free Disposal Hull (FDH) method* forms the ceiling by connecting the highest outcome values with horizontal and vertical segments, resulting in stepwise linear boundaries. There are no restrictions on the shape of the line, allowing for abrupt changes and flat sections. It is hence flexible but sensitive to outliers. The *CE Varying returns to scale (VRS) method* uses the highest observed outcome values but connects them with straight lines to create piecewise linear convex boundaries. This allows the slope of the ceiling to change across intervals, reflecting the possibility that the relationship between necessary condition and outcome may vary at different levels. The CE-VRS method assumes that the ceiling line is convex. CE-VRS produces smoother lines compared to CE-FDH, accommodating varying returns to scale without assuming a fixed rate of change. However, CE-FDH does not require convexity of the ceiling function and is therefore preferred over CE-VRS as the default CE technique for NCA (Dul, 2016).  
+
+**Ceiling regression (CR)** is a parametric technique. It fits a regression linear regression line through the points connecting the linear pieces of the CE ceiling line. The CR ceiling line is smooth and less sensitive to outliers compared the CE ceiling lines. The smoothing approach often leads to some observations in the ceiling zone as well as a smaller ceiling zone. CR methods introduce a parametric model to summarise the relationship between the necessary condition and outcome, while allowing for further modeling and comparison of ceiling lines. The *CR-FDH method* fits a regression model to the stepwise boundary formed by the CE-FDH approach. The *CR-VRS method* fits a regression model to the piecewise linear boundary formed by the CE-VRS approach. Similarly as above, CR-FDH is preferred over CR-VRS.  
+
+Parameters of interest in NCA:  
+
+- $\text{Scope} = (X_{max}-X_{min}) \times (Y_{max}-Y_{min})$ (empirical area of possible combinations between outcome and necessary condition, given the minimum and maximum observed values)  
+- $\text{Ceiling zone}$ (size of the ceiling zone)  
+- $\text{Effect size} = \frac{\text{Ceiling zone}}{\text{Scope}}\%$ (represents how much of a given value of the necessary condition constrains the outcome)  
+- $\text{Accuracy of ceiling line} = \frac{N_{\text{Observations on or below the ceiling line}}}{N_{\text{Total observations}}} * 100\%$ (Benchmark is 95%)  
+- $N_{\text{Observations above the ceiling line}}$  
+- $\text{Fit}$ (closeness of the selected ceiling line to the CE-FDH line)  
+- $\text{p value}$ (estimated using statistical approximate permutation tests, see Dul et al., 2020)  
+- $\text{p accuracy}$ (estimated error of the p value, smaller error as number of resamples increases)  
+- $\text{Slope}$ and $\text{Intercept}$ (parameters to describe straight ceiling line)
+- $\text{Absolute inefficiency}$ (total xy-space where X does not constrain Y and Y is not constraint by X)  
+- $\text{Relative inefficiency}$ (total xy-space where X does not constrain Y and Y is not constraint by X as percentage of $\text{Scope}$)  
+- $\text{Condition inefficiency} = (X_{\text{High}}-X_{\text{cmax}}) / (X_{\text{High}}-X_{\text{Low}}) \times 100\%$ (range of X (as percentage of total range of X) where X does not constrain Y, i.e., percentage of X range where there is no ceiling line)  
+- $\text{Outcome inefficiency} = (Y_{\text{cmin}}-Y_{\text{Low}}) / (Y_{\text{High}}-Y_{\text{Low}}) \times 100\%$ (range of Y (as percentage of total range of Y) where Y is not constraint by X, i.e., percentage of Y range where there is no ceiling line)  
+
+The bottleneck table shows which level of the necessary condition is necessary for each level of outcome. For a given outcome value, it shows the minimum required values of the independent variables.  
+
+# Year 2 data
+
+In this set of analysis, we focus on data on the **focal class sections** taught by MET LDB mathematics teachers in Year 2 (that is, 2011). During the second year of the study, the intention was for all teachers to be randomly assigned to class sections and we focus on those class sections where this was possible. We further limit the analysis to the focal class sections for which there are observations from the FFT, CLASS and MQI observation instruments as well as teacher-value added outcome measures for the state maths test (aligned with curriculum in grades 4-8) and the Balanced Assessment of Mathematics (BAM, grades 4-8). At grade 9, ACT QualityCore Assessments were the only achievement tests administered to the pupils. Data from grade 9 were hence omitted.  
+
+> All analyses included here are at the **class section level**. The total sample is described below.
+
+```{r y2, include=FALSE}
+# define sections in Year 2 for which there is MQI, CLASS and FFT data
+sections_y2 <- intersect(df_mqi$SECTION_ICPSR_ID[df_mqi$YEAR == 2011 & !is.na(df_mqi$NUM_SECTION_MQI)],
+                         intersect(
+                           df_class$SECTION_ICPSR_ID[df_class$YEAR == 2011 & !is.na(df_class$NUM_SECTION_CLASS)],
+                           df_fft$SECTION_ICPSR_ID[df_fft$YEAR == 2011 & !is.na(df_fft$NUM_SECTION_FFT)]
+                         ))
+
+# combine observation data
+df_y2 <- left_join(
+  df_mqi %>% 
+    filter(SECTION_ICPSR_ID %in% sections_y2)
+  , df_class %>% 
+    filter(SECTION_ICPSR_ID %in% sections_y2)
+) %>%
+  left_join(., df_fft %>% 
+              filter(SECTION_ICPSR_ID %in% sections_y2)
+  )
+
+df_y2 %>% group_by(YEAR, NUM_SECTION_FFT, NUM_SECTION_CLASS, NUM_SECTION_MQI) %>% summarise(n = n())
+
+# add information about the class sections
+df_y2 <- right_join(
+  da34414.0003 %>%
+    select(DISTRICT_ICPSR_ID, SCHOOL_ICPSR_ID, TEACHER_ICPSR_ID, SECTION_ICPSR_ID, 
+           GRADE, SUBJECT, SUBJECTLEVEL, YEAR, RANDOMIZED,
+           DAD_NUMSTUDENTS, DAD_PERCGIFTED, DAD_PERCMALE, DAD_PERCSPED, DAD_PERCDISABILITY,
+           DAD_PERCELL, DAD_AVERAGEAGE, DAD_PERCFRL, DAD_PERCWHITE, DAD_PERCBLACK, DAD_PERCASIAN, DAD_PERCHISPANIC, DAD_PERCRACEOTHER,
+           VA2011_MATH, VA2011_MATH_SE, VA2011_MATH_N, VA2011_NOAGGR_MATH, VA2011_BAM, VA2011_BAM_SE, VA2011_BAM_N, VA2011_NOAGGR_BAM) %>%
+    mutate(
+      GRADE = as.character(GRADE),
+      GRADE = as.numeric(substr(GRADE, nchar(GRADE), nchar(GRADE))),
+      SUBJECT = as.character(SUBJECT),
+      SUBJECT = substr(SUBJECT, 5, nchar(SUBJECT)),
+      SUBJECTLEVEL = as.character(SUBJECTLEVEL),
+      YEAR = as.character(YEAR),
+      YEAR = as.numeric(substr(YEAR, 5, nchar(YEAR))),
+      RANDOMIZED = as.character(RANDOMIZED),
+      RANDOMIZED = substr(RANDOMIZED, nchar(RANDOMIZED), nchar(RANDOMIZED))
+    ) 
+  , df_y2) %>% 
+  rename(
+    VA_MATH = VA2011_MATH,
+    VA_MATH_SE = VA2011_MATH_SE,
+    VA_MATH_N = VA2011_MATH_N,
+    VA_NOAGGR_MATH = VA2011_NOAGGR_MATH,
+    VA_BAM = VA2011_BAM,
+    VA_BAM_SE = VA2011_BAM_SE,
+    VA_BAM_N = VA2011_BAM_N,
+    VA_NOAGGR_BAM = VA2011_NOAGGR_BAM
+  ) %>%
+  filter(!is.na(VA_MATH) & !is.na(VA_BAM)) %>% # mostly Grade 9 classrooms excluded
+  as.data.frame()
+
+teachers_y2 <- da34414.0002 %>%
+  select(contains("_ID") | contains("GRADEY2") | contains("SUBJECTY2") | contains("SUBJECTLEVELY2") | contains("DAD_") | contains("NUMSECT_MATH_Y2") | contains("NUMVIDS_MATH_Y2") | contains("NUMSECT_MATHELA_Y2")) %>%
+  filter(TEACHER_ICPSR_ID %in% df_y2$TEACHER_ICPSR_ID) %>%
+  mutate(
+    # make factor variables numeric
+    GRADEY2 = as.numeric(as.character(GRADEY2)),
+    SUBJECTY2 = as.character(SUBJECTY2),
+    SUBJECTY2 = substr(SUBJECTY2, 5, nchar(SUBJECTY2)),
+    SUBJECTLEVELY2 = as.character(SUBJECTLEVELY2)#,
+  ) %>% 
+  rename(GRADE = GRADEY2,
+         SUBJECT = SUBJECTY2,
+         SUBJECTLEVEL = SUBJECTLEVELY2,
+         NUMSECT_MATH = NUMSECT_MATH_Y2,
+         NUMVIDS_MATH = NUMVIDS_MATH_Y2,
+         NUMSECT_MATHELA = NUMSECT_MATHELA_Y2) %>%
+  relocate(starts_with("NUM"), .after = SUBJECTLEVEL) # %>% select(-DAD_YRSEXP)
+
+# define sections, observation data and teacher data
+sections <- sections_y2
+df <- df_y2
+df_teachers <- teachers_y2
+data <- fft[fft$SECTION_ICPSR_ID %in% df$SECTION_ICPSR_ID, score]
+
+<<preproc>>
+```
+
+## Sample demographics
+
+```{r, results='asis', message=F}
+<<demogs_pupils>>
+<<demogs_teachers>>
+```
+
+## Framework for Teaching (FFT)  
+
+```{r, results='asis', message=F}
+<<scale>>
+nrow = 2
+<<adj>>
+```
+
+## Value-added measures  
+
+```{r results='asis', warning=F, message=F}
+<<vam>>
+```
+
+## NCA - FFT (adj.)
+
+```{r, message=F, warning=F, results='asis', fig.height=7, fig.width=7}
+# define NCA parameters
+df_nca <- df
+conditions <- c("FFT_CEV_adj", "FFT_MSB_adj", "FFT_MCP_adj", "FFT_CERR_adj", "FFT_ECL_adj")
+ceilings <- c("ce_fdh", "ce_vrs", "cr_fdh", "cr_vrs", "ols")
+ceilings <- c("ce_fdh", "cr_fdh", "ols")
+ceilings <- c("cr_fdh", "ols")
+xlim <- c(1, 4)
+ylim <- c(-4, 4)
+xbreaks <- .25
+ybreaks <- .5
+xbin <- .125
+ybin <- .5
+file_name_stem <- "coef_NCA_Y2_FFT_adj_"
+vam <- VAM[grepl("_std", VAM)]
+head <- c("State assessment in maths (std.)", "State assessment in maths (adj. std.)", "Balanced assessment of maths (std.)", "Balanced assessment of maths (adj. std.)")
+<<nca>>
+```
+
+## Combined tables
+
+```{r, message=F, warning=F, results='asis'}
+<<combined>>
+```
+
+## NCA - FFT (adj. std.)
+
+```{r, message=F, warning=F, results='asis', fig.height=7, fig.width=7}
+# define NCA parameters
+conditions <- c("FFT_CEV_adj_std", "FFT_MSB_adj_std", "FFT_MCP_adj_std", "FFT_CERR_adj_std", "FFT_ECL_adj_std")
+ylim <- c(-4.5, 4.5)
+xlim <- ylim
+xbreaks <- ybreaks
+xbin <- ybin
+file_name_stem <- "coef_NCA_Y2_FFT_adj_std_"
+vam <- VAM[grepl("_std", VAM)]
+head <- c("State assessment in maths (std.)", "State assessment in maths (adj. std.)", "Balanced assessment of maths (std.)", "Balanced assessment of maths (adj. std.)")
+<<nca>>
+```
+
+
+
+## NCA outliers - FFT (adj.)
+
+```{r, message=F, warning=F, results='asis', fig.height=7, fig.width=7}
+# define NCA parameters
+df_nca <- df %>% filter(
+  VA_MATH_adj_std >= -3 & VA_MATH_adj_std <= 3,
+  VA_BAM_adj_std >= -3 & VA_BAM_adj_std <= 3,
+  FFT_CEV_adj_std >= -3 & FFT_CEV_adj_std <= 3
+) %>%
+  as.data.frame()
+conditions <- c("FFT_CEV_adj", "FFT_MSB_adj", "FFT_MCP_adj", "FFT_CERR_adj", "FFT_ECL_adj")
+xlim <- c(1, 4)
+ylim <- c(-3, 3)
+xbreaks <- .25
+xbin <- .125
+file_name_stem <- "coef_NCA_outliers_Y2_FFT_adj_"
+vam <- VAM[grepl("_adj_std", VAM)]
+head <- c("State assessment in maths (adj. std.)", "Balanced assessment of maths (adj. std.)")
+<<nca>>
+```
+
+## NCA outliers - FFT (adj. std.)
+
+```{r, message=F, warning=F, results='asis', fig.height=7, fig.width=7}
+# define NCA parameters
+conditions <- c("FFT_CEV_adj_std", "FFT_MSB_adj_std", "FFT_MCP_adj_std", "FFT_CERR_adj_std", "FFT_ECL_adj_std")
+xlim <- ylim
+xbreaks <- ybreaks
+xbin <- ybin
+file_name_stem <- "coef_NCA_outliers_Y2_FFT_adj_std_"
+<<nca>>
+```
+
+## Regression
+
+```{r, message=F, results='asis'}
+# score columns
+score_mqi <- c(
+  "MQI_EI", # "Errors & Imprecision"
+  # "MQI_CWCM", # "Classroom Work Connected to Mathematics" # grade dependent
+  # "MQI_ET", # "Explicitness and Thoroughness" # grade dependent
+  "MQI_SPMMR", # "Student Participation in Meaning Making & Reasoning"
+  "MQI_RICH", # "Richness"
+  "MQI_WWSM" # "Working With Students & Mathematics"
+)
+
+# apply shrinkage based on reliability
+for (i in 1:length(score_mqi)) {
+  
+  # adjusted score = MEAN + reliability * (observed score - MEAN)
+  df[, paste0(score_mqi[i], "_adj")] <- c(mean(df[, score_mqi[i]], na.rm = T) + df[, paste0(score_mqi[i], "_rel")] * scale(df[, score_mqi[i]], center = T, scale = F))
+  
+  # standardise scores
+  df[, paste0(score_mqi[i], "_std")] <- c(scale(df[, paste0(score_mqi[i])], center = T, scale = T))
+  df[, paste0(score_mqi[i], "_adj_std")] <- c(scale(df[, paste0(score_mqi[i], "_adj")], center = T, scale = T))
+  
+}
+
+
+# --- PEERS --- #
+
+list_peers <- list()
+for (v in 1:length(vam)) {
+  
+  measure = vam[v]
+  
+  cond <- "FFT_CEV_adj"
+  # define NCA model
+  invisible(capture.output(
+    model <- nca_analysis(data = df, 
+                          x = cond, 
+                          y = measure, 
+                          ceilings = ceilings,
+                          # test.rep = 10000, # number of resamples in the statistical approximate permutation test
+                          steps = seq(-4, 4, .5),
+                          bottleneck.x = "actual",
+                          bottleneck.y = "actual"
+    )))
+  
+  peers <- as.data.frame(model$peers[["cr_fdh"]][[1]])
+  names(peers) <- c(cond, measure)
+  peers$is.peer <- 1
+  
+  df_tmp <- merge(df, peers, by = 0, all.x = T)
+  names(df_tmp) <- gsub(".x", "", names(df_tmp))
+  
+  # MODEL 1
+  # adj.
+  m <- lm(df_tmp[, measure] ~ 
+            df_tmp[, paste0(score_mqi[1], "_adj")] + 
+            df_tmp[, paste0(score_mqi[2], "_adj")] + 
+            df_tmp[, paste0(score_mqi[3], "_adj")] +
+            df_tmp[, paste0(score_mqi[4], "_adj")])
+  # extract coefs
+  coef <- as.data.frame(summary(m)$coefficients)
+  names(coef)[names(coef) == "Pr(>|t|)"] <- "p value"
+  coef$Item <- gsub("_adj|_adj_std", "", gsub("FFT_", "", cond))
+  coef$Item <- c("Intercept", score_mqi)
+  coef$Coefficient <- c("Intercept", rep("Beta", length(score_mqi)))
+  coef$n_obs <- nrow(m$model)
+  adj <- coef
+  # adj. std.
+  m <- lm(df_tmp[, measure] ~ 
+            df_tmp[, paste0(score_mqi[1], "_adj_std")] + 
+            df_tmp[, paste0(score_mqi[2], "_adj_std")] + 
+            df_tmp[, paste0(score_mqi[3], "_adj_std")] +
+            df_tmp[, paste0(score_mqi[4], "_adj_std")])
+  # extract coefs
+  coef <- as.data.frame(summary(m)$coefficients)
+  coef <- as.data.frame(summary(m)$coefficients)
+  names(coef)[names(coef) == "Pr(>|t|)"] <- "p value"
+  coef$Item <- gsub("_adj|_adj_std", "", gsub("FFT_", "", cond))
+  coef$Item <- c("Intercept", score_mqi)
+  coef$Coefficient <- c("Intercept", rep("Beta", length(score_mqi)))
+  coef$n_obs <- nrow(m$model)
+  adj_std <- coef
+  # combine
+  m1 <- left_join(adj %>% 
+                    # filter(Coefficient == "Beta") %>%
+                    select(-Coefficient), 
+                  adj_std %>% 
+                    # filter(Coefficient == "Beta") %>%
+                    rename(Estimate_std = Estimate) %>%
+                    select(c(Item, Estimate_std, n_obs)), 
+                  join_by(Item, n_obs)
+  ) %>%
+    relocate(Item, Estimate, `Std. Error`, Estimate_std) %>%
+    mutate(
+      across(c(Estimate, `Std. Error`, Estimate_std), ~round(.x, 2)),
+      across(c(`t value`, `p value`), ~round(.x, 3))
+    )
+  
+  # MODEL 2
+  # adj.
+  m <- lm(df_tmp[is.na(df_tmp$is.peer), measure] ~ 
+            df_tmp[is.na(df_tmp$is.peer), paste0(score_mqi[1], "_adj")] + 
+            df_tmp[is.na(df_tmp$is.peer), paste0(score_mqi[2], "_adj")] + 
+            df_tmp[is.na(df_tmp$is.peer), paste0(score_mqi[3], "_adj")] +
+            df_tmp[is.na(df_tmp$is.peer), paste0(score_mqi[4], "_adj")])
+  # extract coefs
+  coef <- as.data.frame(summary(m)$coefficients)
+  names(coef)[names(coef) == "Pr(>|t|)"] <- "p value"
+  coef$Item <- gsub("_adj|_adj_std", "", gsub("FFT_", "", cond))
+  coef$Item <- c("Intercept", score_mqi)
+  coef$Coefficient <- c("Intercept", rep("Beta", length(score_mqi)))
+  coef$n_obs <- nrow(m$model)
+  adj <- coef
+  # adj. std.
+  m <- lm(df_tmp[is.na(df_tmp$is.peer), measure] ~ 
+            df_tmp[is.na(df_tmp$is.peer), paste0(score_mqi[1], "_adj_std")] + 
+            df_tmp[is.na(df_tmp$is.peer), paste0(score_mqi[2], "_adj_std")] + 
+            df_tmp[is.na(df_tmp$is.peer), paste0(score_mqi[3], "_adj_std")] +
+            df_tmp[is.na(df_tmp$is.peer), paste0(score_mqi[4], "_adj_std")])
+  # extract coefs
+  coef <- as.data.frame(summary(m)$coefficients)
+  coef <- as.data.frame(summary(m)$coefficients)
+  names(coef)[names(coef) == "Pr(>|t|)"] <- "p value"
+  coef$Item <- gsub("_adj|_adj_std", "", gsub("FFT_", "", cond))
+  coef$Item <- c("Intercept", score_mqi)
+  coef$Coefficient <- c("Intercept", rep("Beta", length(score_mqi)))
+  coef$n_obs <- nrow(m$model)
+  adj_std <- coef
+  # combine
+  m2 <- left_join(adj %>% 
+                    # filter(Coefficient == "Beta") %>%
+                    select(-Coefficient), 
+                  adj_std %>% 
+                    # filter(Coefficient == "Beta") %>%
+                    rename(Estimate_std = Estimate) %>%
+                    select(c(Item, Estimate_std, n_obs)), 
+                  join_by(Item, n_obs)
+  ) %>%
+    relocate(Item, Estimate, `Std. Error`, Estimate_std) %>%
+    mutate(
+      across(c(Estimate, `Std. Error`, Estimate_std), ~round(.x, 2)),
+      across(c(`t value`, `p value`), ~round(.x, 3))
+    )
+  
+  # COMBINE MODELS
+  ols <- left_join(m1, m2, join_by(Item))
+  # names(ols) <- gsub(".x|.y", "", names(ols))
+  
+  # store data in list
+  list_peers[[measure]] <- ols
+}
+
+
+# OLS table #
+
+tmp <- list_peers[[vam[1]]][1, ]
+tmp[, 1:ncol(tmp)] <- NA
+
+# combine both outcomes
+ols <- tmp %>% 
+  bind_rows(., tmp %>% mutate(Item = vam[1])) %>%
+  bind_rows(., list_peers[[vam[1]]]) %>%
+  bind_rows(., tmp %>% mutate(Item = vam[2])) %>%
+  bind_rows(., list_peers[[vam[2]]]) %>%
+  mutate(across(c(`p value.x`, `p value.y`), ~if_else(. < 0.001, "<0.001", sprintf("%.3f", .x))))
+
+# export
+names(ols) <- c("Observation score", rep(c("B", "SE", "β", "t", "p", "N"), 2))
+write.csv(ols, "coef_mqi_peers.csv", row.names = F)
+
+# print to markdown
+idx <- which(is.na(ols$B))
+
+ols %>%
+  kable(caption = "OLS coefficients - Peer model") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_header_above(header = c(" " = 1, "Model 1" = 6, "Model 2" = 6)) %>%
+  row_spec(idx, bold = T) %>%
+  add_footnote(c(paste0("Note. In model 1, data from ", nrow(df_tmp), " classrooms is included. In model 2, data from peers were omitted."),
+                 "This table was saved as coef_mqi_peers.csv"), notation = "none") %>%
+  print()
+
+# --- NECESSARY CONDITION --- #
+
+list_nc <- list()
+thresh <- 1
+for (v in 1:length(vam)) {
+  
+  measure = vam[v]
+  
+  cond <- "FFT_CEV_adj"
+  # define NCA model
+  invisible(capture.output(
+    model <- nca_analysis(data = df, 
+                          x = cond, 
+                          y = measure, 
+                          ceilings = ceilings,
+                          # test.rep = 10000, # number of resamples in the statistical approximate permutation test
+                          steps = seq(-4, 4, .5),
+                          bottleneck.x = "actual",
+                          bottleneck.y = "actual"
+    )))
+  
+  bottleneck <- model$bottlenecks[[1]]
+  bottleneck[, 2] <- c(model$bottlenecks[[1]][[2]])
+  
+  df_tmp <- df
+  df_tmp$above_outcome <- df_tmp[, measure] > thresh
+  df_tmp$above_nc <- df_tmp[, cond] > as.numeric(bottleneck[bottleneck[, measure] == thresh, cond])
+  df_tmp$include <- ifelse(df_tmp$above_outcome & df_tmp$above_nc, T, F)
+  # df_tmp$include <- ifelse(df_tmp$above_nc, T, F)
+  
+  # MODEL 1
+  # adj.
+  m <- lm(df_tmp[, measure] ~ 
+            df_tmp[, paste0(score_mqi[1], "_adj")] + 
+            df_tmp[, paste0(score_mqi[2], "_adj")] + 
+            df_tmp[, paste0(score_mqi[3], "_adj")] +
+            df_tmp[, paste0(score_mqi[4], "_adj")])
+  # extract coefs
+  coef <- as.data.frame(summary(m)$coefficients)
+  names(coef)[names(coef) == "Pr(>|t|)"] <- "p value"
+  coef$Item <- gsub("_adj|_adj_std", "", gsub("FFT_", "", cond))
+  coef$Item <- c("Intercept", score_mqi)
+  coef$Coefficient <- c("Intercept", rep("Beta", length(score_mqi)))
+  coef$n_obs <- nrow(m$model)
+  adj <- coef
+  # adj. std.
+  m <- lm(df_tmp[, measure] ~ 
+            df_tmp[, paste0(score_mqi[1], "_adj_std")] + 
+            df_tmp[, paste0(score_mqi[2], "_adj_std")] + 
+            df_tmp[, paste0(score_mqi[3], "_adj_std")] +
+            df_tmp[, paste0(score_mqi[4], "_adj_std")])
+  # extract coefs
+  coef <- as.data.frame(summary(m)$coefficients)
+  coef <- as.data.frame(summary(m)$coefficients)
+  names(coef)[names(coef) == "Pr(>|t|)"] <- "p value"
+  coef$Item <- gsub("_adj|_adj_std", "", gsub("FFT_", "", cond))
+  coef$Item <- c("Intercept", score_mqi)
+  coef$Coefficient <- c("Intercept", rep("Beta", length(score_mqi)))
+  coef$n_obs <- nrow(m$model)
+  adj_std <- coef
+  # combine
+  m1 <- left_join(adj %>% 
+                    # filter(Coefficient == "Beta") %>%
+                    select(-Coefficient), 
+                  adj_std %>% 
+                    # filter(Coefficient == "Beta") %>%
+                    rename(Estimate_std = Estimate) %>%
+                    select(c(Item, Estimate_std, n_obs)), 
+                  join_by(Item, n_obs)
+  ) %>%
+    relocate(Item, Estimate, `Std. Error`, Estimate_std) %>%
+    mutate(
+      across(c(Estimate, `Std. Error`, Estimate_std), ~round(.x, 2)),
+      across(c(`t value`, `p value`), ~round(.x, 3))
+    )
+  
+  # MODEL 2
+  # adj.
+  m <- lm(df_tmp[df_tmp$include, measure] ~ 
+            df_tmp[df_tmp$include, paste0(score_mqi[1], "_adj")] + 
+            df_tmp[df_tmp$include, paste0(score_mqi[2], "_adj")] + 
+            df_tmp[df_tmp$include, paste0(score_mqi[3], "_adj")] +
+            df_tmp[df_tmp$include, paste0(score_mqi[4], "_adj")])
+  # extract coefs
+  coef <- as.data.frame(summary(m)$coefficients)
+  names(coef)[names(coef) == "Pr(>|t|)"] <- "p value"
+  coef$Item <- gsub("_adj|_adj_std", "", gsub("FFT_", "", cond))
+  coef$Item <- c("Intercept", score_mqi)
+  coef$Coefficient <- c("Intercept", rep("Beta", length(score_mqi)))
+  coef$n_obs <- nrow(m$model)
+  adj <- coef
+  # adj. std.
+  m <- lm(df_tmp[df_tmp$include, measure] ~ 
+            df_tmp[df_tmp$include, paste0(score_mqi[1], "_adj_std")] + 
+            df_tmp[df_tmp$include, paste0(score_mqi[2], "_adj_std")] + 
+            df_tmp[df_tmp$include, paste0(score_mqi[3], "_adj_std")] +
+            df_tmp[df_tmp$include, paste0(score_mqi[4], "_adj_std")])
+  # extract coefs
+  coef <- as.data.frame(summary(m)$coefficients)
+  coef <- as.data.frame(summary(m)$coefficients)
+  names(coef)[names(coef) == "Pr(>|t|)"] <- "p value"
+  coef$Item <- gsub("_adj|_adj_std", "", gsub("FFT_", "", cond))
+  coef$Item <- c("Intercept", score_mqi)
+  coef$Coefficient <- c("Intercept", rep("Beta", length(score_mqi)))
+  coef$n_obs <- nrow(m$model)
+  adj_std <- coef
+  # combine
+  m2 <- left_join(adj %>% 
+                    # filter(Coefficient == "Beta") %>%
+                    select(-Coefficient), 
+                  adj_std %>% 
+                    # filter(Coefficient == "Beta") %>%
+                    rename(Estimate_std = Estimate) %>%
+                    select(c(Item, Estimate_std, n_obs)), 
+                  join_by(Item, n_obs)
+  ) %>%
+    relocate(Item, Estimate, `Std. Error`, Estimate_std) %>%
+    mutate(
+      across(c(Estimate, `Std. Error`, Estimate_std), ~round(.x, 2)),
+      across(c(`t value`, `p value`), ~round(.x, 3))
+    )
+  
+  # COMBINE MODELS
+  ols <- left_join(m1, m2, join_by(Item))
+  # names(ols) <- gsub(".x|.y", "", names(ols))
+  
+  # store data in list
+  list_nc[[measure]] <- ols
+}
+
+
+# OLS table #
+
+tmp <- list_nc[[vam[1]]][1, ]
+tmp[, 1:ncol(tmp)] <- NA
+
+# combine both outcomes
+ols <- tmp %>% 
+  bind_rows(., tmp %>% mutate(Item = vam[1])) %>%
+  bind_rows(., list_nc[[vam[1]]]) %>%
+  bind_rows(., tmp %>% mutate(Item = vam[2])) %>%
+  bind_rows(., list_nc[[vam[2]]]) %>%
+  mutate(across(c(`p value.x`, `p value.y`), ~if_else(. < 0.001, "<0.001", sprintf("%.3f", .x))))
+
+# export
+names(ols) <- c("Observation score", rep(c("B", "SE", "β", "t", "p", "N"), 2))
+write.csv(ols, "coef_mqi_nc.csv", row.names = F)
+
+# print to markdown
+idx <- which(is.na(ols$B))
+
+ols %>%
+  kable(caption = "OLS coefficients - outcome and/or NC threshold") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_header_above(header = c(" " = 1, "Model 1" = 6, "Model 2" = 6)) %>%
+  row_spec(idx, bold = T) %>%
+  add_footnote(c(paste0("Note. In model 1, data from ", nrow(df_tmp), " classrooms is included. In model 2, data from classrooms is included after classrooms not meeting outcome and/or NC threshold were excluded."),
+                 "This table was saved as coef_mqi_nc.csv"), notation = "none") %>%
+  print()
+
+
+# --- NECESSITY INEFFCIENCY --- #
+
+list_ineff <- list()
+for (v in 1:length(vam)) {
+  
+  measure = vam[v]
+  
+  cond <- "FFT_CEV_adj"
+  # define NCA model
+  invisible(capture.output(
+    model <- nca_analysis(data = df, 
+                          x = cond, 
+                          y = measure, 
+                          ceilings = ceilings,
+                          # test.rep = 10000, # number of resamples in the statistical approximate permutation test
+                          steps = seq(-4, 4, .5),
+                          bottleneck.x = "actual",
+                          bottleneck.y = "actual"
+    )))
+  
+  # extract ceiling line
+  intercept <- model$plots[[1]]$lines$cr_fdh$coefficients[["(Intercept)"]]
+  slope <- model$plots[[1]]$lines$cr_fdh$coefficients[["x"]]
+  
+  # extract bounding box
+  xmin <- model$Xmin[[1]]
+  xmax <- model$Xmax[[1]]
+  ymin <- model$Ymin[[1]]
+  ymax <- model$Ymax[[1]]
+  
+  # extract necessary condition zone (NCZ) boundaries
+  y_cmin <- model$plots[[1]]$line_matrices$cr_fdh[2,2]
+  x_cmax <- model$plots[[1]]$line_matrices$cr_fdh[3,1]
+  
+  # determine which observations lie in NCZ
+  df_tmp <- df
+  df_tmp$below_ceil <- df_tmp[, measure] <= (intercept + slope * df_tmp[, cond]) # below or on the ceiling line
+  df_tmp$ineff_outcome <- df_tmp[, measure] < y_cmin
+  df_tmp$ineff_cond <- df_tmp[, cond] > x_cmax
+  df_tmp$ncz <- df_tmp$below_ceil == T & df_tmp$ineff_outcome == F & df_tmp$ineff_cond == F
+  df_tmp$ineff <- df_tmp$ineff_outcome == T | df_tmp$ineff_cond == T
+  
+  # plot data
+  ggplot() +
+    # bounding box
+    geom_vline(xintercept = xmin, col = black40, linetype = "dashed") +
+    geom_vline(xintercept = xmax, col = black40, linetype = "dashed") +
+    geom_hline(yintercept = ymin, col = black40, linetype = "dashed") +
+    geom_hline(yintercept = ymax, col = black40, linetype = "dashed") +
+    # NCZ box
+    geom_vline(xintercept = x_cmax, col = red, linetype = "dashed", linewidth = 1) +
+    geom_hline(yintercept = y_cmin, col = blue, linetype = "dashed", linewidth = 1) +
+    # ineff rectangles
+    geom_rect(aes(xmin = x_cmax, xmax = xmax, ymin = ymin, ymax = ymax), alpha = 0.4, fill = red) +
+    geom_rect(aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = y_cmin), alpha = 0.4, fill = blue) +
+    # NCZ
+    geom_polygon(data = data.frame(x = c(xmin, x_cmax, x_cmax), y = c(y_cmin, y_cmin, ymax)), aes(x=x, y=y), fill = teal, alpha = .4) +
+    # scatterplot
+    geom_point(data = df_tmp[df_tmp$below_ceil == F, ], aes(x = get(cond), y = get(measure)), col = black40) +
+    geom_point(data = df_tmp[df_tmp$below_ceil == T & df_tmp$ncz == F, ], aes(x = get(cond), y = get(measure)), col = black) +
+    geom_point(data = df_tmp[df_tmp$ncz == T, ], aes(x = get(cond), y = get(measure)), col = teal) +
+    # ceiling line
+    geom_abline(slope = slope, intercept = intercept, col = teal, linewidth = 1)
+    
+  
+  # MODEL 1: ALL OBS
+  # adj.
+  m <- lm(df_tmp[, measure] ~ 
+            df_tmp[, paste0(score_mqi[1], "_adj")] + 
+            df_tmp[, paste0(score_mqi[2], "_adj")] + 
+            df_tmp[, paste0(score_mqi[3], "_adj")] +
+            df_tmp[, paste0(score_mqi[4], "_adj")])
+  # extract coefs
+  coef <- as.data.frame(summary(m)$coefficients)
+  names(coef)[names(coef) == "Pr(>|t|)"] <- "p value"
+  coef$Item <- gsub("_adj|_adj_std", "", gsub("FFT_", "", cond))
+  coef$Item <- c("Intercept", score_mqi)
+  coef$Coefficient <- c("Intercept", rep("Beta", length(score_mqi)))
+  coef$n_obs <- nrow(m$model)
+  adj <- coef
+  # adj. std.
+  m <- lm(df_tmp[, measure] ~ 
+            df_tmp[, paste0(score_mqi[1], "_adj_std")] + 
+            df_tmp[, paste0(score_mqi[2], "_adj_std")] + 
+            df_tmp[, paste0(score_mqi[3], "_adj_std")] +
+            df_tmp[, paste0(score_mqi[4], "_adj_std")])
+  # extract coefs
+  coef <- as.data.frame(summary(m)$coefficients)
+  coef <- as.data.frame(summary(m)$coefficients)
+  names(coef)[names(coef) == "Pr(>|t|)"] <- "p value"
+  coef$Item <- gsub("_adj|_adj_std", "", gsub("FFT_", "", cond))
+  coef$Item <- c("Intercept", score_mqi)
+  coef$Coefficient <- c("Intercept", rep("Beta", length(score_mqi)))
+  coef$n_obs <- nrow(m$model)
+  adj_std <- coef
+  # combine
+  m1 <- left_join(adj %>% 
+                    # filter(Coefficient == "Beta") %>%
+                    select(-Coefficient), 
+                  adj_std %>% 
+                    # filter(Coefficient == "Beta") %>%
+                    rename(Estimate_std = Estimate) %>%
+                    select(c(Item, Estimate_std, n_obs)), 
+                  join_by(Item, n_obs)
+  ) %>%
+    relocate(Item, Estimate, `Std. Error`, Estimate_std) %>%
+    mutate(
+      across(c(Estimate, `Std. Error`, Estimate_std), ~round(.x, 2)),
+      across(c(`t value`, `p value`), ~round(.x, 3))
+    )
+  
+  # MODEL 2: OBS IN NCZ
+  # adj.
+  m <- lm(df_tmp[df_tmp$ncz, measure] ~ 
+            df_tmp[df_tmp$ncz, paste0(score_mqi[1], "_adj")] + 
+            df_tmp[df_tmp$ncz, paste0(score_mqi[2], "_adj")] + 
+            df_tmp[df_tmp$ncz, paste0(score_mqi[3], "_adj")] +
+            df_tmp[df_tmp$ncz, paste0(score_mqi[4], "_adj")])
+  # extract coefs
+  coef <- as.data.frame(summary(m)$coefficients)
+  names(coef)[names(coef) == "Pr(>|t|)"] <- "p value"
+  coef$Item <- gsub("_adj|_adj_std", "", gsub("FFT_", "", cond))
+  coef$Item <- c("Intercept", score_mqi)
+  coef$Coefficient <- c("Intercept", rep("Beta", length(score_mqi)))
+  coef$n_obs <- nrow(m$model)
+  adj <- coef
+  # adj. std.
+  m <- lm(df_tmp[df_tmp$ncz, measure] ~ 
+            df_tmp[df_tmp$ncz, paste0(score_mqi[1], "_adj_std")] + 
+            df_tmp[df_tmp$ncz, paste0(score_mqi[2], "_adj_std")] + 
+            df_tmp[df_tmp$ncz, paste0(score_mqi[3], "_adj_std")] +
+            df_tmp[df_tmp$ncz, paste0(score_mqi[4], "_adj_std")])
+  # extract coefs
+  coef <- as.data.frame(summary(m)$coefficients)
+  coef <- as.data.frame(summary(m)$coefficients)
+  names(coef)[names(coef) == "Pr(>|t|)"] <- "p value"
+  coef$Item <- gsub("_adj|_adj_std", "", gsub("FFT_", "", cond))
+  coef$Item <- c("Intercept", score_mqi)
+  coef$Coefficient <- c("Intercept", rep("Beta", length(score_mqi)))
+  coef$n_obs <- nrow(m$model)
+  adj_std <- coef
+  # combine
+  m2 <- left_join(adj %>% 
+                    # filter(Coefficient == "Beta") %>%
+                    select(-Coefficient), 
+                  adj_std %>% 
+                    # filter(Coefficient == "Beta") %>%
+                    rename(Estimate_std = Estimate) %>%
+                    select(c(Item, Estimate_std, n_obs)), 
+                  join_by(Item, n_obs)
+  ) %>%
+    relocate(Item, Estimate, `Std. Error`, Estimate_std) %>%
+    mutate(
+      across(c(Estimate, `Std. Error`, Estimate_std), ~round(.x, 2)),
+      across(c(`t value`, `p value`), ~round(.x, 3))
+    )
+  
+  # MODEL 3: OBS WITH NECESSITY INEFF
+  # adj.
+  m <- lm(df_tmp[df_tmp$ineff, measure] ~ 
+            df_tmp[df_tmp$ineff, paste0(score_mqi[1], "_adj")] + 
+            df_tmp[df_tmp$ineff, paste0(score_mqi[2], "_adj")] + 
+            df_tmp[df_tmp$ineff, paste0(score_mqi[3], "_adj")] +
+            df_tmp[df_tmp$ineff, paste0(score_mqi[4], "_adj")])
+  # extract coefs
+  coef <- as.data.frame(summary(m)$coefficients)
+  names(coef)[names(coef) == "Pr(>|t|)"] <- "p value"
+  coef$Item <- gsub("_adj|_adj_std", "", gsub("FFT_", "", cond))
+  coef$Item <- c("Intercept", score_mqi)
+  coef$Coefficient <- c("Intercept", rep("Beta", length(score_mqi)))
+  coef$n_obs <- nrow(m$model)
+  adj <- coef
+  # adj. std.
+  m <- lm(df_tmp[df_tmp$ineff, measure] ~ 
+            df_tmp[df_tmp$ineff, paste0(score_mqi[1], "_adj_std")] + 
+            df_tmp[df_tmp$ineff, paste0(score_mqi[2], "_adj_std")] + 
+            df_tmp[df_tmp$ineff, paste0(score_mqi[3], "_adj_std")] +
+            df_tmp[df_tmp$ineff, paste0(score_mqi[4], "_adj_std")])
+  # extract coefs
+  coef <- as.data.frame(summary(m)$coefficients)
+  coef <- as.data.frame(summary(m)$coefficients)
+  names(coef)[names(coef) == "Pr(>|t|)"] <- "p value"
+  coef$Item <- gsub("_adj|_adj_std", "", gsub("FFT_", "", cond))
+  coef$Item <- c("Intercept", score_mqi)
+  coef$Coefficient <- c("Intercept", rep("Beta", length(score_mqi)))
+  coef$n_obs <- nrow(m$model)
+  adj_std <- coef
+  # combine
+  m3 <- left_join(adj %>% 
+                    # filter(Coefficient == "Beta") %>%
+                    select(-Coefficient), 
+                  adj_std %>% 
+                    # filter(Coefficient == "Beta") %>%
+                    rename(Estimate_std = Estimate) %>%
+                    select(c(Item, Estimate_std, n_obs)), 
+                  join_by(Item, n_obs)
+  ) %>%
+    relocate(Item, Estimate, `Std. Error`, Estimate_std) %>%
+    mutate(
+      across(c(Estimate, `Std. Error`, Estimate_std), ~round(.x, 2)),
+      across(c(`t value`, `p value`), ~round(.x, 3))
+    )
+  
+  # MODEL 3A: OBS WITH COND INEFF
+  # adj.
+  m <- lm(df_tmp[df_tmp$ineff_cond, measure] ~ 
+            df_tmp[df_tmp$ineff_cond, paste0(score_mqi[1], "_adj")] + 
+            df_tmp[df_tmp$ineff_cond, paste0(score_mqi[2], "_adj")] + 
+            df_tmp[df_tmp$ineff_cond, paste0(score_mqi[3], "_adj")] +
+            df_tmp[df_tmp$ineff_cond, paste0(score_mqi[4], "_adj")])
+  # extract coefs
+  coef <- as.data.frame(summary(m)$coefficients)
+  names(coef)[names(coef) == "Pr(>|t|)"] <- "p value"
+  coef$Item <- gsub("_adj|_adj_std", "", gsub("FFT_", "", cond))
+  coef$Item <- c("Intercept", score_mqi)
+  coef$Coefficient <- c("Intercept", rep("Beta", length(score_mqi)))
+  coef$n_obs <- nrow(m$model)
+  adj <- coef
+  # adj. std.
+  m <- lm(df_tmp[df_tmp$ineff_cond, measure] ~ 
+            df_tmp[df_tmp$ineff_cond, paste0(score_mqi[1], "_adj_std")] + 
+            df_tmp[df_tmp$ineff_cond, paste0(score_mqi[2], "_adj_std")] + 
+            df_tmp[df_tmp$ineff_cond, paste0(score_mqi[3], "_adj_std")] +
+            df_tmp[df_tmp$ineff_cond, paste0(score_mqi[4], "_adj_std")])
+  # extract coefs
+  coef <- as.data.frame(summary(m)$coefficients)
+  coef <- as.data.frame(summary(m)$coefficients)
+  names(coef)[names(coef) == "Pr(>|t|)"] <- "p value"
+  coef$Item <- gsub("_adj|_adj_std", "", gsub("FFT_", "", cond))
+  coef$Item <- c("Intercept", score_mqi)
+  coef$Coefficient <- c("Intercept", rep("Beta", length(score_mqi)))
+  coef$n_obs <- nrow(m$model)
+  adj_std <- coef
+  # combine
+  m3A <- left_join(adj %>% 
+                     # filter(Coefficient == "Beta") %>%
+                     select(-Coefficient), 
+                   adj_std %>% 
+                     # filter(Coefficient == "Beta") %>%
+                     rename(Estimate_std = Estimate) %>%
+                    select(c(Item, Estimate_std, n_obs)), 
+                  join_by(Item, n_obs)
+  ) %>%
+    relocate(Item, Estimate, `Std. Error`, Estimate_std) %>%
+    mutate(
+      across(c(Estimate, `Std. Error`, Estimate_std), ~round(.x, 2)),
+      across(c(`t value`, `p value`), ~round(.x, 3))
+    )
+  
+  # MODEL 3B: OBS WITH OUTCOME INEFF
+  # adj.
+  m <- lm(df_tmp[df_tmp$ineff_outcome, measure] ~ 
+            df_tmp[df_tmp$ineff_outcome, paste0(score_mqi[1], "_adj")] + 
+            df_tmp[df_tmp$ineff_outcome, paste0(score_mqi[2], "_adj")] + 
+            df_tmp[df_tmp$ineff_outcome, paste0(score_mqi[3], "_adj")] +
+            df_tmp[df_tmp$ineff_outcome, paste0(score_mqi[4], "_adj")])
+  # extract coefs
+  coef <- as.data.frame(summary(m)$coefficients)
+  names(coef)[names(coef) == "Pr(>|t|)"] <- "p value"
+  coef$Item <- gsub("_adj|_adj_std", "", gsub("FFT_", "", cond))
+  coef$Item <- c("Intercept", score_mqi)
+  coef$Coefficient <- c("Intercept", rep("Beta", length(score_mqi)))
+  coef$n_obs <- nrow(m$model)
+  adj <- coef
+  # adj. std.
+  m <- lm(df_tmp[df_tmp$ineff_outcome, measure] ~ 
+            df_tmp[df_tmp$ineff_outcome, paste0(score_mqi[1], "_adj_std")] + 
+            df_tmp[df_tmp$ineff_outcome, paste0(score_mqi[2], "_adj_std")] + 
+            df_tmp[df_tmp$ineff_outcome, paste0(score_mqi[3], "_adj_std")] +
+            df_tmp[df_tmp$ineff_outcome, paste0(score_mqi[4], "_adj_std")])
+  # extract coefs
+  coef <- as.data.frame(summary(m)$coefficients)
+  coef <- as.data.frame(summary(m)$coefficients)
+  names(coef)[names(coef) == "Pr(>|t|)"] <- "p value"
+  coef$Item <- gsub("_adj|_adj_std", "", gsub("FFT_", "", cond))
+  coef$Item <- c("Intercept", score_mqi)
+  coef$Coefficient <- c("Intercept", rep("Beta", length(score_mqi)))
+  coef$n_obs <- nrow(m$model)
+  adj_std <- coef
+  # combine
+  m3B <- left_join(adj %>% 
+                     # filter(Coefficient == "Beta") %>%
+                     select(-Coefficient), 
+                   adj_std %>% 
+                     # filter(Coefficient == "Beta") %>%
+                     rename(Estimate_std = Estimate) %>%
+                    select(c(Item, Estimate_std, n_obs)), 
+                  join_by(Item, n_obs)
+  ) %>%
+    relocate(Item, Estimate, `Std. Error`, Estimate_std) %>%
+    mutate(
+      across(c(Estimate, `Std. Error`, Estimate_std), ~round(.x, 2)),
+      across(c(`t value`, `p value`), ~round(.x, 3))
+    )
+  
+  
+  # COMBINE MODELS
+  ols <- left_join(m1, m2, join_by(Item)) %>%
+    left_join(., m3, join_by(Item)) %>%
+    left_join(., m3A, join_by(Item)) %>%
+    left_join(., m3B, join_by(Item))
+  # names(ols) <- gsub(".x|.y", "", names(ols))
+  
+  # store data in list
+  list_ineff[[measure]] <- ols
+  
+}
+
+# OLS table #
+
+tmp <- list_ineff[[vam[1]]][1, ]
+tmp[, 1:ncol(tmp)] <- NA
+
+# combine both outcomes
+ols <- tmp %>% 
+  bind_rows(., tmp %>% mutate(Item = vam[1])) %>%
+  bind_rows(., list_ineff[[vam[1]]]) %>%
+  bind_rows(., tmp %>% mutate(Item = vam[2])) %>%
+  bind_rows(., list_ineff[[vam[2]]]) %>%
+  mutate(across(c(`p value.x`, `p value.y`), ~if_else(. < 0.001, "<0.001", sprintf("%.3f", .x))))
+
+# export
+names(ols) <- c("Observation score", rep(c("B", "SE", "β", "t", "p", "N"), 5))
+write.csv(ols, "coef_mqi_ineff.csv", row.names = F)
+
+# print to markdown
+idx <- which(is.na(ols$B))
+
+ols %>%
+  kable(caption = "OLS coefficients - Inefficiency models") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
+  add_header_above(header = c(" " = 1, "Model 1" = 6, "Model 2" = 6, "Model 3" = 6, "Model 3A" = 6, "Model 3B" = 6)) %>%
+  row_spec(idx, bold = T) %>%
+  add_footnote(c(paste0("Note. In model 1, data from ", nrow(df_tmp), " classrooms were included. In model 2, data from classrooms in the 'necessary condition zone' were included. In model 3, data from classrooms affected by necessity inefficiency were included. In model 3A, data from classrooms affected by condition inefficiency were included. In model 3B, data from classrooms affected by outcome inefficiency were included."),
+                 "This table was saved as coef_mqi_ineff.csv"), notation = "none") %>%
+  print()
+
+
+
+```
+
+
+# Year 1 data
+
+In this set of analysis, we focus on data on the **focal class sections** taught by MET LDB mathematics teachers in Year 1 (that is, 2010). During the first year of the study, teachers were not randomised. We limit the analysis to the focal class sections for which there are observations from the FFT, CLASS and MQI observation instruments as well as teacher-value added outcome measures for the state maths test (aligned with curriculum in grades 4-8) and the Balanced Assessment of Mathematics (BAM, grades 4-8). At grade 9, ACT QualityCore Assessments were the only achievement tests administered to the pupils. Data from grade 9 were hence omitted.  
+
+> All analyses included here are at the **class section level**. The total sample is described below.
+
+```{r y1, include=FALSE}
+# define sections in Year 1 for which there is MQI, CLASS and FFT data
+sections_y1 <- intersect(df_mqi$SECTION_ICPSR_ID[df_mqi$YEAR == 2010 & !is.na(df_mqi$NUM_SECTION_MQI)],
+                         intersect(
+                           df_class$SECTION_ICPSR_ID[df_class$YEAR == 2010 & !is.na(df_class$NUM_SECTION_CLASS)],
+                           df_fft$SECTION_ICPSR_ID[df_fft$YEAR == 2010 & !is.na(df_fft$NUM_SECTION_FFT)]
+                         ))
+
+# combine observation data
+df_y1 <- left_join(
+  df_mqi %>% 
+    filter(SECTION_ICPSR_ID %in% sections_y1)
+  , df_class %>% 
+    filter(SECTION_ICPSR_ID %in% sections_y1)
+) %>%
+  left_join(., df_fft %>% 
+              filter(SECTION_ICPSR_ID %in% sections_y1)
+  )
+
+df_y1 %>% group_by(YEAR, NUM_SECTION_FFT, NUM_SECTION_CLASS, NUM_SECTION_MQI) %>% summarise(n = n())
+
+# add information about the class sections
+df_y1 <- right_join(
+  da34414.0003 %>%
+    select(DISTRICT_ICPSR_ID, SCHOOL_ICPSR_ID, TEACHER_ICPSR_ID, SECTION_ICPSR_ID, 
+           GRADE, SUBJECT, SUBJECTLEVEL, YEAR, RANDOMIZED,
+           DAD_NUMSTUDENTS, DAD_PERCGIFTED, DAD_PERCMALE, DAD_PERCSPED, DAD_PERCDISABILITY,
+           DAD_PERCELL, DAD_AVERAGEAGE, DAD_PERCFRL, DAD_PERCWHITE, DAD_PERCBLACK, DAD_PERCASIAN, DAD_PERCHISPANIC, DAD_PERCRACEOTHER,
+           VA2010_MATH, VA2010_MATH_SE, VA2010_MATH_N, VA2010_NOAGGR_MATH, VA2010_BAM, VA2010_BAM_SE, VA2010_BAM_N, VA2010_NOAGGR_BAM) %>%
+    mutate(
+      GRADE = as.character(GRADE),
+      GRADE = as.numeric(substr(GRADE, nchar(GRADE), nchar(GRADE))),
+      SUBJECT = as.character(SUBJECT),
+      SUBJECT = substr(SUBJECT, 5, nchar(SUBJECT)),
+      SUBJECTLEVEL = as.character(SUBJECTLEVEL),
+      YEAR = as.character(YEAR),
+      YEAR = as.numeric(substr(YEAR, 5, nchar(YEAR))),
+      RANDOMIZED = as.character(RANDOMIZED),
+      RANDOMIZED = substr(RANDOMIZED, nchar(RANDOMIZED), nchar(RANDOMIZED))
+    ) 
+  , df_y1) %>% 
+  rename(
+    VA_MATH = VA2010_MATH,
+    VA_MATH_SE = VA2010_MATH_SE,
+    VA_MATH_N = VA2010_MATH_N,
+    VA_NOAGGR_MATH = VA2010_NOAGGR_MATH,
+    VA_BAM = VA2010_BAM,
+    VA_BAM_SE = VA2010_BAM_SE,
+    VA_BAM_N = VA2010_BAM_N,
+    VA_NOAGGR_BAM = VA2010_NOAGGR_BAM
+  ) %>%
+  filter(!is.na(VA_MATH) & !is.na(VA_BAM)) %>% # mostly Grade 9 classrooms excluded
+  as.data.frame()
+
+teachers_y1 <- da34414.0002 %>%
+  select(contains("_ID") | contains("GRADEY1") | contains("SUBJECTY1") | contains("SUBJECTLEVELY1") | contains("DAD_") | contains("NUMSECT_MATH_Y1") | contains("NUMVIDS_MATH_Y1") | contains("NUMSECT_MATHELA_Y1")) %>%
+  filter(TEACHER_ICPSR_ID %in% df_y1$TEACHER_ICPSR_ID) %>%
+  mutate(
+    # make factor variables numeric
+    GRADEY1 = as.numeric(as.character(GRADEY1)),
+    SUBJECTY1 = as.character(SUBJECTY1),
+    SUBJECTY1 = substr(SUBJECTY1, 5, nchar(SUBJECTY1)),
+    SUBJECTLEVELY1 = as.character(SUBJECTLEVELY1),
+  ) %>% 
+  rename(GRADE = GRADEY1,
+         SUBJECT = SUBJECTY1,
+         SUBJECTLEVEL = SUBJECTLEVELY1,
+         NUMSECT_MATH = NUMSECT_MATH_Y1,
+         NUMVIDS_MATH = NUMVIDS_MATH_Y1,
+         NUMSECT_MATHELA = NUMSECT_MATHELA_Y1) %>%
+  relocate(starts_with("NUM"), .after = SUBJECTLEVEL) # %>% select(-DAD_YRSEXP)
+
+# define sections, observation data and teacher data
+sections <- sections_y1
+df <- df_y1
+df_teachers <- teachers_y1
+data <- fft[fft$SECTION_ICPSR_ID %in% df$SECTION_ICPSR_ID, score]
+
+<<preproc>>
+```
+
+## Sample demographics
+
+```{r, results='asis', message=F}
+<<demogs_pupils>>
+<<demogs_teachers>>
+```
+
+## Framework for Teaching (FFT)  
+
+```{r, results='asis', message=F}
+<<scale>>
+nrow = 2
+<<adj>>
+```
+
+## Value-added measures  
+
+```{r results='asis', warning=F, message=F}
+<<vam>>
+```
+
+## NCA - FFT (adj.)
+
+```{r, message=F, warning=F, results='asis', fig.height=7, fig.width=7}
+# define NCA parameters
+df_nca <- df
+conditions <- c("FFT_CEV_adj", "FFT_MSB_adj", "FFT_MCP_adj", "FFT_CERR_adj", "FFT_ECL_adj")
+ceilings <- c("ce_fdh", "ce_vrs", "cr_fdh", "cr_vrs", "ols")
+ceilings <- c("ce_fdh", "cr_fdh", "ols")
+ceilings <- c("cr_fdh", "ols")
+xlim <- c(1, 4)
+ylim <- c(-4, 4)
+xbreaks <- .25
+ybreaks <- .5
+xbin <- .125
+ybin <- .5
+file_name_stem <- "coef_NCA_Y1_FFT_adj_"
+<<nca>>
+```
+
+## NCA - FFT (adj. std.)
+
+```{r, message=F, warning=F, results='asis', fig.height=7, fig.width=7}
+# define NCA parameters
+conditions <- c("FFT_CEV_adj_std", "FFT_MSB_adj_std", "FFT_MCP_adj_std", "FFT_CERR_adj_std", "FFT_ECL_adj_std")
+ylim <- c(-4.5, 4.5)
+xlim <- ylim
+xbreaks <- ybreaks
+xbin <- ybin
+file_name_stem <- "coef_NCA_Y1_FFT_adj_std_"
+<<nca>>
+```
+
+## NCA outliers - FFT (adj.)
+
+```{r, message=F, warning=F, results='asis', fig.height=7, fig.width=7}
+# define NCA parameters
+df_nca <- df %>% filter(
+  VA_MATH_adj_std >= -3 & VA_MATH_adj_std <= 3,
+  VA_BAM_adj_std >= -3 & VA_BAM_adj_std <= 3,
+  FFT_CEV_adj_std >= -3 & FFT_CEV_adj_std <= 3
+) %>%
+  as.data.frame()
+conditions <- c("FFT_CEV_adj", "FFT_MSB_adj", "FFT_MCP_adj", "FFT_CERR_adj", "FFT_ECL_adj")
+xlim <- c(1, 4)
+ylim <- c(-3, 3)
+xbreaks <- .25
+xbin <- .125
+file_name_stem <- "coef_NCA_outliers_Y1_FFT_adj_"
+<<nca>>
+```
+
+## NCA outliers - FFT (adj. std.)
+
+```{r, message=F, warning=F, results='asis', fig.height=7, fig.width=7}
+# define NCA parameters
+conditions <- c("FFT_CEV_adj_std", "FFT_MSB_adj_std", "FFT_MCP_adj_std", "FFT_CERR_adj_std", "FFT_ECL_adj_std")
+xlim <- ylim
+xbreaks <- ybreaks
+xbin <- ybin
+file_name_stem <- "coef_NCA_outliers_Y1_FFT_adj_std_"
+<<nca>>
+```
+
+# Year 1 and 2 data combined
+
+> All analyses included here are at the **class section level**. The total sample is described below.
+
+```{r, y1+2, include=FALSE}
+# combine observation data
+df <- bind_rows(df_y1, df_y2)
+
+# get teacher data
+df_teachers <- da34414.0002 %>%
+  select(contains("_ID") | contains("DAD_")) %>%
+  filter(TEACHER_ICPSR_ID %in% df$TEACHER_ICPSR_ID)
+
+# define sections in Year 1 for which there is MQI, CLASS and FFT data
+sections <- !duplicated(sections_y1, sections_y2)
+data <- fft[fft$SECTION_ICPSR_ID %in% df$SECTION_ICPSR_ID, score]
+
+<<preproc>>
+```
+
+## Sample demographics
+
+```{r, results='asis', message=F}
+<<demogs_pupils>>
+<<demogs_teachers>>
+```
+
+## Framework for Teaching (FFT)  
+
+```{r, results='asis', message=F}
+<<scale>>
+nrow = 2
+<<adj>>
+```
+
+## Value-added measures  
+
+```{r results='asis', warning=F, message=F}
+<<vam>>
+```
+
+## NCA - FFT (adj.)
+
+```{r, message=F, warning=F, results='asis', fig.height=7, fig.width=7}
+# define NCA parameters
+df_nca <- df
+conditions <- c("FFT_CEV_adj", "FFT_MSB_adj", "FFT_MCP_adj", "FFT_CERR_adj", "FFT_ECL_adj")
+ceilings <- c("ce_fdh", "ce_vrs", "cr_fdh", "cr_vrs", "ols")
+ceilings <- c("ce_fdh", "cr_fdh", "ols")
+ceilings <- c("cr_fdh", "ols")
+xlim <- c(1, 4)
+ylim <- c(-4, 4)
+xbreaks <- .25
+ybreaks <- .5
+xbin <- .125
+ybin <- .5
+file_name_stem <- "coef_NCA_Y1Y2_FFT_adj_"
+<<nca>>
+```
+
+## NCA - FFT (adj. std.)
+
+```{r, message=F, warning=F, results='asis', fig.height=7, fig.width=7}
+# define NCA parameters
+conditions <- c("FFT_CEV_adj_std", "FFT_MSB_adj_std", "FFT_MCP_adj_std", "FFT_CERR_adj_std", "FFT_ECL_adj_std")
+ylim <- c(-4.5, 4.5)
+xlim <- ylim
+xbreaks <- ybreaks
+xbin <- ybin
+file_name_stem <- "coef_NCA_Y1Y2_FFT_adj_std_"
+<<nca>>
+```
+
+## NCA outliers - FFT (adj.)
+
+```{r, message=F, warning=F, results='asis', fig.height=7, fig.width=7}
+# define NCA parameters
+df_nca <- df %>% filter(
+  VA_MATH_adj_std >= -3 & VA_MATH_adj_std <= 3,
+  VA_BAM_adj_std >= -3 & VA_BAM_adj_std <= 3,
+  FFT_CEV_adj_std >= -3 & FFT_CEV_adj_std <= 3
+) %>%
+  as.data.frame()
+conditions <- c("FFT_CEV_adj", "FFT_MSB_adj", "FFT_MCP_adj", "FFT_CERR_adj", "FFT_ECL_adj")
+xlim <- c(1, 4)
+ylim <- c(-3, 3)
+xbreaks <- .25
+xbin <- .125
+file_name_stem <- "coef_NCA_outliers_Y1Y2_FFT_adj_"
+<<nca>>
+```
+
+## NCA outliers - FFT (adj. std.)
+
+```{r, message=F, warning=F, results='asis', fig.height=7, fig.width=7}
+# define NCA parameters
+conditions <- c("FFT_CEV_adj_std", "FFT_MSB_adj_std", "FFT_MCP_adj_std", "FFT_CERR_adj_std", "FFT_ECL_adj_std")
+xlim <- ylim
+xbreaks <- ybreaks
+xbin <- ybin
+file_name_stem <- "coef_NCA_outliers_Y1Y2_FFT_adj_std_"
+<<nca>>
+```
