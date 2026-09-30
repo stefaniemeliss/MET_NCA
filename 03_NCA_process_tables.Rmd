@@ -86,11 +86,11 @@ pup <- y2_all %>%
               select(-c(Characteristic, Weighted.mean, Weighted.SD, N))
             ) %>%
   rename(Characteristic = Description) %>%
-  filter(!grepl("age", Characteristic)) %>%
+  filter(!grepl("Average", Characteristic)) %>%
   as.data.frame()
 
 # write data
-file_name <- paste0("table_demogs_pupils.csv")
+file_name <- paste0("table_desc_pupils.csv")
 write.csv(pup, file = file.path(dir_out, file_name), row.names = F)
 
 # print to markdown
@@ -157,7 +157,7 @@ teach_cat <- y2_all %>%
 teach <- bind_rows(teach_cat, teach_num)
 
 # print to markdown
-file_name <- paste0("table_demogs_teachers.csv")
+file_name <- paste0("table_desc_teachers.csv")
 write.csv(teach, file = file.path(dir_out, file_name), row.names = F)
 
 teach %>%
@@ -190,8 +190,8 @@ out[idx, 1] <- c("Year 2 (all)", "Year 1 (all)", "Year 2 (matched)", "Year 1 (ma
 names(out) <- c("Observation score", "Scores", "Rater", "Segments", "Lessons", "Class sections", "Reliability", "Aggregated score", "Mininum", "Maximum")
 
 # write data
-file_name <- paste0("table_shrinkage.csv")
-write.csv(out, file = file.path(dir_out, file_name))
+file_name <- paste0("table_desc_shrinkage.csv")
+write.csv(out, file = file.path(dir_out, file_name), row.names = F)
 
 # print to markdown
 out %>%
@@ -213,6 +213,7 @@ y2_all <- read.csv(file.path(dir_out, "coef_Y2_all_main_ols.csv"))
 y1_all <- read.csv(file.path(dir_out, "coef_Y1_all_main_ols.csv"))
 y2_both <- read.csv(file.path(dir_out, "coef_Y2_both_main_ols.csv"))
 y1_both <- read.csv(file.path(dir_out, "coef_Y1_both_main_ols.csv"))
+y1y2 <- read.csv(file.path(dir_out, "coef_Y1Y2_main_ols.csv"))
 
 col_names1 <- names(y2_all)
 col_names2 <- unlist(y2_all[1, ])
@@ -221,21 +222,23 @@ names(y2_all) <- col_names2
 names(y1_all) <- col_names2
 names(y2_both) <- col_names2
 names(y1_both) <- col_names2
+names(y1y2) <- col_names2
 
 ols <- extract_coefs2(y2_all) %>%
   left_join(extract_coefs2(y1_all), join_by(Outcome, `Observation score`)) %>%
   left_join(extract_coefs2(y2_both), join_by(Outcome, `Observation score`)) %>%
-  left_join(extract_coefs2(y1_both), join_by(Outcome, `Observation score`))
+  left_join(extract_coefs2(y1_both), join_by(Outcome, `Observation score`)) %>%
+  left_join(extract_coefs2(y1y2), join_by(Outcome, `Observation score`)) 
 
 
 # prepare for export
-col_names1 <- c("", "", "Year 2 (all)", rep("", 3), "Year 1 (all)", rep("", 3), "Year 2 (matched)", rep("", 3), "Year 1 (matched)", rep("", 3))
-col_names2 <- c("Outcome", "Observation score", rep(c("M1 Coefficient", "M1 Model statistics", "M2 Coefficient", "M2 Model statistics"), 4))
+col_names1 <- c("", "", "Year 2 (all)", rep("", 3), "Year 1 (all)", rep("", 3), "Year 2 (matched)", rep("", 3), "Year 1 (matched)", rep("", 3), "Across years", rep("", 3))
+col_names2 <- c("Outcome", "Observation score", rep(c("M1 Coefficient", "M1 Model statistics", "M2 Coefficient", "M2 Model statistics"), 5))
 names(ols) <- col_names1
 ols[1, ] <- col_names2
 
 # save file
-file_name <- paste0("table_ols.csv")
+file_name <- paste0("table_fft_ols.csv")
 write.csv(ols, file = file.path(dir_out, file_name), row.names = F)
 
 # print to markdown
@@ -245,7 +248,7 @@ idx <- grep("VA", ols[, 2])
 ols[-1] %>%
   kable(caption = "OLS coefficients", row.names = F, col.names = col_names2[-1]) %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
-  add_header_above(header = c(" " = 1, "Year 2 (all)" = 4, "Year 1 (all)" = 4, "Year 2 (matched)" = 4, "Year 1 (matched)" = 4)) %>%
+  add_header_above(header = c(" " = 1, "Year 2 (all)" = 4, "Year 1 (all)" = 4, "Year 2 (matched)" = 4, "Year 1 (matched)" = 4, "Across years" = 4)) %>%
   row_spec(idx, bold = T) %>%
   add_footnote(c(paste0("Note. Coefficients show β (SE). Data from all teachers was included in the model. For counts, please refer to the other tables."),
                  "In model 1, each predictor was entered seperately. In model 2, all predictors were entered together.", 
@@ -372,7 +375,7 @@ bam %>%
 
 ```
 
-## NCA params from the exploratory analysis
+## NCA params from the sensitivity analysis
 
 ```{r, message=F, warning=F, results='asis'}
 supp <- read.csv(file.path(dir_out, "coef_Y2_all_supp_nca.csv"))
@@ -380,6 +383,7 @@ outlier <- read.csv(file.path(dir_out, "coef_Y2_all_outlier_nca.csv"))
 y1_all <- read.csv(file.path(dir_out, "coef_Y1_all_main_nca.csv"))
 y2_both <- read.csv(file.path(dir_out, "coef_Y2_both_main_nca.csv"))
 y1_both <- read.csv(file.path(dir_out, "coef_Y1_both_main_nca.csv"))
+y1y2 <- read.csv(file.path(dir_out, "coef_Y1Y2_main_nca.csv"))
 
 sam <- supp %>%
   filter(grepl("SAM", Measure)) %>%
@@ -412,6 +416,13 @@ sam <- supp %>%
               filter(grepl("SAM", Measure)) %>%
               select(Metric, all_of(conditions[1])) %>%
               rename(`Year 1 (matched)` = conditions[1]) %>%
+              filter(!grepl("VA", Metric))
+            )  %>%
+  full_join(.,
+            y1y2 %>%
+              filter(grepl("SAM", Measure)) %>%
+              select(Metric, all_of(conditions[1])) %>%
+              rename(`Across years` = conditions[1]) %>%
               filter(!grepl("VA", Metric))
             ) 
 
@@ -460,6 +471,13 @@ bam <- supp %>%
               select(Metric, all_of(conditions[1])) %>%
               rename(`Year 1 (matched)` = conditions[1]) %>%
               filter(!grepl("VA", Metric))
+            )   %>%
+  full_join(.,
+            y1y2 %>%
+              filter(grepl("BAM", Measure)) %>%
+              select(Metric, all_of(conditions[1])) %>%
+              rename(`Across years` = conditions[1]) %>%
+              filter(!grepl("VA", Metric))
             ) 
 
 # save file
@@ -482,7 +500,8 @@ bam %>%
 y2_all <- read.csv(file.path(dir_out, "coef_Y2_all_mqi_subgroups.csv"))
 y1_all <- read.csv(file.path(dir_out, "coef_Y1_all_mqi_subgroups.csv"))
 y2_both <- read.csv(file.path(dir_out, "coef_Y2_both_mqi_subgroups.csv"))
-y1_both <- read.csv(file.path(dir_out, "coef_Y2_both_mqi_subgroups.csv"))
+y1_both <- read.csv(file.path(dir_out, "coef_Y1_both_mqi_subgroups.csv"))
+y1y2 <- read.csv(file.path(dir_out, "coef_Y1Y2_mqi_subgroups.csv"))
 
 col_names1 <- names(y2_all)
 col_names2 <- unlist(y2_all[1, ])
@@ -491,17 +510,19 @@ names(y2_all) <- col_names2
 names(y1_all) <- col_names2
 names(y2_both) <- col_names2
 names(y1_both) <- col_names2
+names(y1y2) <- col_names2
 
 
 ols <- extract_coefs(y2_all) %>%
   bind_rows(extract_coefs(y1_all)) %>%
   bind_rows(extract_coefs(y2_both)) %>%
-  bind_rows(extract_coefs(y1_both))
+  bind_rows(extract_coefs(y1_both)) %>%
+  bind_rows(extract_coefs(y1y2))
 ols <- rbind(NA, ols)
 
 idx <- grep("Outcome", ols$Outcome)
 ols[idx, ] <- NA
-ols[idx, 1:2] <- c("Year 2 (all)", "Year 1 (all)", "Year 2 (matched)", "Year 1 (matched)")
+ols[idx, 1:2] <- c("Year 2 (all)", "Year 1 (all)", "Year 2 (matched)", "Year 1 (matched)", "Across years")
 
 
 # prepare for export
@@ -511,7 +532,7 @@ names(ols) <- col_names1
 ols[1, ] <- col_names2
 
 # get data for each outcome
-sam <- ols[grepl("Out|Year|SAM", ols[, 1]), ]
+sam <- ols[grepl("Out|Year|years|SAM", ols[, 1]), ]
 sam <- sam[!grepl("VA", sam[, 2]), -1]
 
 # save file
@@ -520,7 +541,7 @@ write.csv(sam, file = file.path(dir_out, file_name), row.names = F)
 
 # print to markdown
 sam[1, ] <- NA
-idx <- grep("Year", sam[, 1])
+idx <- grep("Year|years", sam[, 1])
 
 sam %>%
   kable(caption = "OLS coefficients - SAM condition inefficiency models", row.names = F, col.names = col_names2[-1]) %>%
@@ -532,7 +553,7 @@ sam %>%
   print()
 
 # get data for each outcome
-bam <- ols[grepl("Out|Year|BAM", ols[, 1]), ]
+bam <- ols[grepl("Out|Year|years|BAM", ols[, 1]), ]
 bam <- bam[!grepl("VA", bam[, 2]), -1]
 
 # save file
@@ -541,7 +562,7 @@ write.csv(bam, file = file.path(dir_out, file_name), row.names = F)
 
 # print to markdown
 bam[1, ] <- NA
-idx <- grep("Year", bam[, 1])
+idx <- grep("Year|years", bam[, 1])
 
 bam %>%
   kable(caption = "OLS coefficients - BAM condition inefficiency models", row.names = F, col.names = col_names2[-1]) %>%
@@ -560,6 +581,7 @@ y2_all <- read.csv(file.path(dir_out, "coef_Y2_all_mqi_interaction.csv"))
 y1_all <- read.csv(file.path(dir_out, "coef_Y1_all_mqi_interaction.csv"))
 y2_both <- read.csv(file.path(dir_out, "coef_Y2_both_mqi_interaction.csv"))
 y1_both <- read.csv(file.path(dir_out, "coef_Y1_both_mqi_interaction.csv"))
+y1y2 <- read.csv(file.path(dir_out, "coef_Y1Y2_mqi_interaction.csv"))
 
 ncol <- (ncol(y2_all)+2)/2
 col_names1 <- names(y2_all)
@@ -569,6 +591,7 @@ names(y2_all) <- col_names2
 names(y1_all) <- col_names2
 names(y2_both) <- col_names2
 names(y1_both) <- col_names2
+names(y1y2) <- col_names2
 
 dummy <- y2_all %>%
   select(1:ncol) %>%
@@ -643,11 +666,30 @@ dummy <- y2_all %>%
               tidyr::fill(`Model statistics`, .direction = "down") %>%
               mutate(`Model statistics` = if_else(is.na(`Observation score`), `Model statistics`, NA)) %>%
               select(Outcome, `Observation score`, Coefficient, `Model statistics`)
+            , join_by(Outcome, `Observation score`)) %>%
+  left_join(.,
+            y1y2 %>%
+              select(1:ncol) %>%
+              tidyr::fill(Outcome, .direction = "down") %>%
+              mutate(
+                stars = if_else(p == "<.001", "***", 
+                                if_else(as.numeric(p) < 0.01, "**",
+                                        if_else(as.numeric(p) < 0.05, "*",
+                                                ""))),
+                Coefficient = if_else(!grepl("VA", `Observation score`) & !is.na(`Observation score`), paste0(β, stars, " (", SE, ")"), NA),
+                `Model statistics` = if_else(!grepl("VA|Obs", `Observation score`) & !is.na(`Observation score`), 
+                                             paste0("R2 = ", R2, ",\nF(", numdf, ", ", dendf, ") = ", `F`, ",\np = ", `p (F)`), 
+                                             NA),
+                `Model statistics` = gsub("= <", "<", `Model statistics`)
+              ) %>%
+              tidyr::fill(`Model statistics`, .direction = "down") %>%
+              mutate(`Model statistics` = if_else(is.na(`Observation score`), `Model statistics`, NA)) %>%
+              select(Outcome, `Observation score`, Coefficient, `Model statistics`)
             , join_by(Outcome, `Observation score`)) 
 
 # prepare for export
-col_names1 <- c("", "", "Year 2 (all)", "", "Year 1 (all)", "", "Year 2 (matched)", "", "Year 1 (matched)", "")
-col_names2 <- c("Outcome", "Observation score", rep(c("Coefficient", "Model statistics"), 4))
+col_names1 <- c("", "", "Year 2 (all)", "", "Year 1 (all)", "", "Year 2 (matched)", "", "Year 1 (matched)", "", "Across years", "")
+col_names2 <- c("Outcome", "Observation score", rep(c("Coefficient", "Model statistics"), 5))
 names(dummy) <- col_names1
 dummy[1, ] <- col_names2
 
@@ -664,7 +706,7 @@ idx <- grep("VA", dummy[, 2])
 dummy[-1] %>%
   kable(caption = "OLS coefficients - Condition inefficiency interaction models", row.names = F, col.names = col_names2[-1]) %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T, full_width = F, position = "left") %>%
-  add_header_above(header = c(" " = 1, "Year 2 (all)" = 2, "Year 1 (all)" = 2, "Year 2 (matched)" = 2, "Year 1 (matched)" = 2)) %>%
+  add_header_above(header = c(" " = 1, "Year 2 (all)" = 2, "Year 1 (all)" = 2, "Year 2 (matched)" = 2, "Year 1 (matched)" = 2, "Across years" = 2)) %>%
   row_spec(idx, bold = T) %>%
   add_footnote(c(paste0("Note. Coefficients show β (SE). Data from all teachers was included in the model. For counts, please refer to the other tables."),
                  "Following from the subgroup analysis, presence (CEV <= x_cmax) vs. absence (CEV > x_cmax) of a constraint of the condition on the outcome was included into the models as interaction term.", 
